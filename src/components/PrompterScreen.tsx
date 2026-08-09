@@ -88,19 +88,20 @@ export function PrompterScreen({
   }, [fontSize])
 
   return (
-    <div className="relative z-20 flex flex-1 items-center justify-center overflow-hidden p-4 sm:p-6">
-      {/* Contenedor flotante del teleprónpter: ocupa el 50% del alto de
-          pantalla en vertical (portrait) y el 40% en horizontal (landscape),
-          centrado sobre el video de cámara de fondo con un fondo oscuro
-          semitransparente + blur para legibilidad. */}
-      <div className="relative flex h-[50vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/60 shadow-2xl backdrop-blur-sm landscape:h-[40vh]">
+    // Overlay del teleprónpter: flota centrado (z-10) por encima del <video>
+    // de cámara (z-0) dentro del stage de 60vh/60% que arma App.tsx; no
+    // define su propio alto de pantalla, sino que llena ese recuadro.
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 sm:p-6">
+      {/* Contenedor flotante: fondo oscuro semitransparente + blur para
+          legibilidad sobre la cámara en vivo. */}
+      <div className="relative flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/60 shadow-2xl backdrop-blur-sm">
         <div
           ref={scrollContainerRef}
           tabIndex={0}
           className="h-full overflow-y-auto outline-none"
           style={{ WebkitMaskImage: readingWindowMask, maskImage: readingWindowMask }}
         >
-          <div className="mx-auto max-w-3xl space-y-6 px-6 py-[21vh] md:px-10 landscape:py-[17vh]">
+          <div className="mx-auto max-w-3xl space-y-6 px-6 py-[50vh] md:px-10">
             {lines.map((line, index) => {
               if (!line.trim()) {
                 return <div key={index} aria-hidden className="h-4" />

@@ -1,4 +1,4 @@
-import { Menu, X } from 'lucide-react'
+import { Video } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
@@ -43,10 +43,6 @@ export default function App() {
   // voz (micrófono escuchando) como para el modo automático (motor de
   // scroll corriendo). En modo manual no se usa: no hay proceso que iniciar.
   const [isActive, setIsActive] = useState(false)
-  // Panel de configuración (guion, controles, grabadora): en escritorio
-  // siempre visible como sidebar; en iPhone/móvil se puede ocultar con el
-  // botón flotante para que la cámara y el texto ocupen el 100% del viewport.
-  const [isPanelOpen, setIsPanelOpen] = useState(true)
 
   const lines = useMemo(() => script.split('\n'), [script])
 
@@ -76,30 +72,22 @@ export default function App() {
 
   // Grabadora de video independiente del teleprónpter: su propio ciclo de
   // vida (cámara, MediaRecorder, blob en vista previa) no depende del guion
-  // ni del modo de desplazamiento. Vive en App porque el preview de cámara
-  // se usa como fondo de pantalla completa detrás del teleprónpter.
+  // ni del modo de desplazamiento. Vive en App porque el <video> de cámara
+  // en vivo y el modal de vista previa se renderizan a este nivel.
   const {
     status: recorderStatus,
     errorMessage: recorderError,
     videoPreviewRef,
     previewBlob,
     previewMimeType,
+    canShareFiles,
     start: startRecording,
     stop: stopRecording,
+    shareVideo,
     confirmDownload,
     discardPreview,
   } = useVideoRecorder()
   const isRecording = recorderStatus === 'recording'
-
-  // Al iniciar a grabar, oculta automáticamente el panel lateral en móviles
-  // para que la cámara y el texto ocupen el 100% del viewport. En escritorio
-  // no tiene efecto: ControlPanel siempre se muestra ahí sin importar
-  // isPanelOpen (ver md:flex en su propio className).
-  useEffect(() => {
-    if (isRecording) {
-      setIsPanelOpen(false)
-    }
-  }, [isRecording])
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -215,52 +203,23 @@ export default function App() {
   }, [scrollMode, isActive])
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Fondo de cámara a pantalla completa: el <video> queda montado
-          siempre (nunca condicionado a isRecording) para que la ref esté
-          disponible desde el primer frame en que useVideoRecorder intenta
-          asignarle el stream; si se montara solo cuando isRecording es true
-          se perdería la carrera contra el propio cambio de estado que activa
-          esa condición. Se oculta con opacidad mientras no hay grabación.
-          MediaRecorder captura el MediaStream de getUserMedia directamente,
-          así que el archivo grabado siempre queda limpio (cámara + mic) sin
-          esta capa de teleprónpter, sin importar lo que se vea aquí. */}
-      <video
-        ref={videoPreviewRef}
-        muted
-        playsInline
-        autoPlay
-        className={[
-          'fixed inset-0 z-0 h-full w-full object-cover transition-opacity duration-300',
-          isRecording ? 'opacity-100' : 'pointer-events-none opacity-0',
-        ].join(' ')}
-      />
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100 landscape:flex-row">
+      {/* Stage: 60% superior en vertical (portrait) / 60% izquierdo en
+          horizontal (landscape). El <video> queda montado siempre (nunca
+          condicionado a isRecording), así el MediaStream de getUserMedia
+          nunca se degrada a solo audio por perder su elemento de destino. */}
+      <div className="relative h-[60vh] w-full shrink-0 overflow-hidden bg-black landscape:h-full landscape:w-[60%]">
+        <video ref={videoPreviewRef} muted playsInline autoPlay className="absolute inset-0 z-0 h-full w-full object-cover" />
 
-      {/* Contenido de la app (panel + teleprónpter): flota por encima del
-          fondo de cámara. */}
-      <div className="relative z-20 flex h-full w-full flex-col overflow-hidden md:flex-row">
-        <ControlPanel
-          script={script}
-          onScriptChange={setScript}
-          fontSize={fontSize}
-          onFontSizeChange={setFontSize}
-          speechStatus={speechStatus}
-          speechError={speechError}
-          lastTranscript={lastTranscript}
-          isActive={isActive}
-          onStart={handleStart}
-          onStop={handleStop}
-          onReset={handleReset}
-          scrollMode={scrollMode}
-          onScrollModeChange={handleScrollModeChange}
-          autoScrollSpeed={autoScrollSpeed}
-          onAutoScrollSpeedChange={setAutoScrollSpeed}
-          isRecording={isRecording}
-          recorderError={recorderError}
-          onStartRecording={startRecording}
-          onStopRecording={stopRecording}
-          isPanelOpen={isPanelOpen}
-        />
+        {!isRecording && (
+          <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center text-slate-700">
+            <Video className="h-10 w-10" />
+          </div>
+        )}
+
+        {/* MediaRecorder captura el MediaStream de getUserMedia directamente,
+            así que el archivo grabado siempre queda limpio (cámara + mic) sin
+            esta capa de teleprónpter, sin importar lo que se vea aquí. */}
         <PrompterScreen
           lines={lines}
           currentIndex={currentIndex}
@@ -271,19 +230,41 @@ export default function App() {
         />
       </div>
 
-      {/* Toggle flotante solo en móvil/iPhone: oculta el panel para que la
-          cámara y el texto del teleprónpter ocupen el 100% del viewport. */}
-      <button
-        type="button"
-        onClick={() => setIsPanelOpen((open) => !open)}
-        aria-label={isPanelOpen ? 'Ocultar panel de configuración' : 'Mostrar panel de configuración'}
-        className="fixed right-4 top-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900/90 text-slate-100 shadow-lg backdrop-blur transition hover:bg-slate-800 md:hidden"
-      >
-        {isPanelOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-      </button>
+      {/* 40% inferior (portrait) / derecho (landscape): controles fijos,
+          siempre visibles, sin drawer ni botón para ocultarlos. */}
+      <ControlPanel
+        script={script}
+        onScriptChange={setScript}
+        fontSize={fontSize}
+        onFontSizeChange={setFontSize}
+        speechStatus={speechStatus}
+        speechError={speechError}
+        lastTranscript={lastTranscript}
+        isActive={isActive}
+        onStart={handleStart}
+        onStop={handleStop}
+        onReset={handleReset}
+        scrollMode={scrollMode}
+        onScrollModeChange={handleScrollModeChange}
+        autoScrollSpeed={autoScrollSpeed}
+        onAutoScrollSpeedChange={setAutoScrollSpeed}
+        isRecording={isRecording}
+        recorderError={recorderError}
+        onStartRecording={startRecording}
+        onStopRecording={stopRecording}
+      />
 
       {previewBlob && previewMimeType && (
-        <VideoPreviewModal blob={previewBlob} mimeType={previewMimeType} onSave={confirmDownload} onDiscard={discardPreview} />
+        <VideoPreviewModal
+          blob={previewBlob}
+          mimeType={previewMimeType}
+          canShare={canShareFiles}
+          onShare={() => {
+            void shareVideo()
+          }}
+          onDownload={confirmDownload}
+          onDiscard={discardPreview}
+        />
       )}
     </div>
   )

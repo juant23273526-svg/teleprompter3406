@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 
 export type VideoRecorderStatus = 'idle' | 'recording' | 'error'
@@ -12,9 +12,13 @@ interface UseVideoRecorderResult {
   previewBlob: Blob | null
   /** MIME type real con el que se grabó el blob (determina la extensión al guardar). */
   previewMimeType: string | null
+  /** true si el navegador puede abrir la hoja de compartir nativa con el archivo de video (iOS/Android). */
+  canShareFiles: boolean
   start: () => Promise<void>
   stop: () => void
-  /** Descarga el blob en vista previa y limpia el estado. */
+  /** Abre la hoja de compartir/guardar nativa (navigator.share) con el video como archivo adjunto. */
+  shareVideo: () => Promise<boolean>
+  /** Descarga el blob en vista previa (fallback tradicional de escritorio) y limpia el estado. */
   confirmDownload: () => void
   /** Descarta el blob en vista previa sin guardarlo, liberando la memoria. */
   discardPreview: () => void
@@ -42,6 +46,12 @@ function pickSupportedMimeType(): string | undefined {
 /** iOS/Safari solo puede reproducir y guardar .mp4; el resto usa .webm como fallback. */
 function extensionForMimeType(mimeType: string): string {
   return mimeType.includes('mp4') ? 'mp4' : 'webm'
+}
+
+/** Empaqueta el blob grabado como File, con nombre/tipo consistentes con el MIME real detectado. */
+function buildVideoFile(blob: Blob, mimeType: string): File {
+  const extension = extensionForMimeType(mimeType)
+  return new File([blob], `teleprompter-video.${extension}`, { type: mimeType })
 }
 
 function downloadBlob(blob: Blob, mimeType: string): void {
@@ -146,6 +156,45 @@ export function useVideoRecorder(): UseVideoRecorderResult {
     }
   }, [releaseStream])
 
+  // Se recalcula solo cuando cambia el blob/mimeType en vista previa: navigator.canShare
+  // exige un File real (con el tamaño/tipo final) para decidir si la hoja nativa
+  // soporta adjuntar video, algo que en la práctica solo Safari/Chrome en
+  // iOS y Android exponen; en escritorio normalmente da false.
+  const canShareFiles = useMemo(() => {
+    if (!previewBlob || !previewMimeType) return false
+    if (typeof navigator === 'undefined' || typeof navigator.canShare !== 'function') return false
+    try {
+      return navigator.canShare({ files: [buildVideoFile(previewBlob, previewMimeType)] })
+    } catch {
+      return false
+    }
+  }, [previewBlob, previewMimeType])
+
+  const shareVideo = useCallback(async () => {
+    if (!previewBlob || !previewMimeType) return false
+
+    const file = buildVideoFile(previewBlob, previewMimeType)
+    if (!navigator.canShare?.({ files: [file] })) return false
+
+    try {
+      await navigator.share({
+        files: [file],
+        title: 'Mi Grabación',
+        text: 'Video grabado con Teleprónpter',
+      })
+      setPreviewBlob(null)
+      setPreviewMimeType(null)
+      return true
+    } catch (error) {
+      // AbortError = el usuario cerró la hoja de compartir sin elegir nada:
+      // no es un error real, dejamos el preview intacto para que pueda reintentar.
+      if (error instanceof Error && error.name !== 'AbortError') {
+        console.error('No se pudo compartir el video:', error)
+      }
+      return false
+    }
+  }, [previewBlob, previewMimeType])
+
   const confirmDownload = useCallback(() => {
     if (previewBlob && previewMimeType) {
       downloadBlob(previewBlob, previewMimeType)
@@ -176,8 +225,10 @@ export function useVideoRecorder(): UseVideoRecorderResult {
     videoPreviewRef,
     previewBlob,
     previewMimeType,
+    canShareFiles,
     start,
     stop,
+    shareVideo,
     confirmDownload,
     discardPreview,
   }

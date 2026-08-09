@@ -23,8 +23,6 @@ interface ControlPanelProps {
   recorderError: string | null
   onStartRecording: () => void
   onStopRecording: () => void
-  /** En móviles, controla si el panel (drawer) está visible; en escritorio siempre se muestra. */
-  isPanelOpen: boolean
 }
 
 const SPEECH_STATUS_CONFIG: Record<
@@ -68,7 +66,6 @@ export function ControlPanel({
   recorderError,
   onStartRecording,
   onStopRecording,
-  isPanelOpen,
 }: ControlPanelProps) {
   const status = SPEECH_STATUS_CONFIG[speechStatus]
   const StatusIcon = status.Icon
@@ -78,12 +75,10 @@ export function ControlPanel({
   const canToggleActive = scrollMode === 'voice' || scrollMode === 'auto'
 
   return (
-    <aside
-      className={[
-        isPanelOpen ? 'flex' : 'hidden',
-        'h-full w-full flex-col gap-5 overflow-y-auto border-b border-slate-800 bg-slate-900 p-5 md:flex md:w-96 md:border-b-0 md:border-r',
-      ].join(' ')}
-    >
+    // 40% inferior (portrait) / derecho (landscape) de la pantalla, siempre
+    // visible y con scroll propio: sin drawer que ocultar ni botón de cerrar,
+    // así el <video> del stage nunca pierde foco ni se desmonta.
+    <aside className="flex h-[40vh] w-full shrink-0 flex-col gap-5 overflow-y-auto border-t border-slate-800 bg-slate-900 p-5 landscape:h-full landscape:w-[40%] landscape:border-l landscape:border-t-0">
       <div>
         <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
         <p className="text-sm text-slate-400">Reconocimiento de voz nativo del navegador</p>
@@ -174,7 +169,7 @@ export function ControlPanel({
         <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Grabadora de video</span>
         <p className="text-xs text-slate-500">
           {isRecording
-            ? 'La cámara ocupa el fondo de pantalla completo mientras grabas.'
+            ? 'Cámara en vivo arriba mientras grabas.'
             : 'La toma se graba limpia (sin el texto del teleprónpter en pantalla).'}
         </p>
 

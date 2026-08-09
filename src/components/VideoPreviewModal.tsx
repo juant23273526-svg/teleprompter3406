@@ -1,19 +1,24 @@
-import { Download, Trash2 } from 'lucide-react'
+import { Download, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 
 interface VideoPreviewModalProps {
   blob: Blob
   mimeType: string
-  onSave: () => void
+  /** true si el navegador soporta compartir el archivo por navigator.share (iOS/Android). */
+  canShare: boolean
+  onShare: () => void
+  onDownload: () => void
   onDiscard: () => void
 }
 
 /**
  * Modal de revisión que se abre al detener la grabación: el video ya no se
  * descarga solo, así el usuario puede repetir la toma sin llenar la carpeta
- * de descargas con clips fallidos.
+ * de descargas con clips fallidos. En iOS/Android, el botón principal abre
+ * la hoja de compartir nativa (Guardar en Fotos, WhatsApp, Instagram, etc.)
+ * en vez de forzar una descarga que en iOS termina en iCloud Drive.
  */
-export function VideoPreviewModal({ blob, mimeType, onSave, onDiscard }: VideoPreviewModalProps) {
+export function VideoPreviewModal({ blob, mimeType, canShare, onShare, onDownload, onDiscard }: VideoPreviewModalProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   useEffect(() => {
@@ -37,13 +42,28 @@ export function VideoPreviewModal({ blob, mimeType, onSave, onDiscard }: VideoPr
         <video ref={videoRef} controls playsInline className="w-full rounded-lg bg-black" />
 
         <div className="flex flex-col gap-2 sm:flex-row">
+          {canShare && (
+            <button
+              type="button"
+              onClick={onShare}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+            >
+              <Share2 className="h-4 w-4" />
+              Guardar / Compartir Video
+            </button>
+          )}
           <button
             type="button"
-            onClick={onSave}
-            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400"
+            onClick={onDownload}
+            className={[
+              'flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition',
+              canShare
+                ? 'border border-slate-700 text-slate-300 hover:bg-slate-800'
+                : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400',
+            ].join(' ')}
           >
             <Download className="h-4 w-4" />
-            Descargar / Guardar Video
+            Descargar Archivo Directo
           </button>
           <button
             type="button"
