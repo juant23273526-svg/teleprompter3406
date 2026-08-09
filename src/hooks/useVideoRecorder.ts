@@ -21,12 +21,18 @@ interface UseVideoRecorderResult {
 }
 
 /**
- * Orden de preferencia de MIME types para MediaRecorder. Safari/iOS no
- * soporta WebM en absoluto pero sí grabación a MP4 (H.264) desde iOS 14.3+,
- * así que probamos primero los formatos MP4 antes de caer a WebM para
- * navegadores basados en Chromium/Firefox.
+ * Orden de preferencia estricto de MIME types para MediaRecorder, priorizando
+ * el H.264/AAC nativo de Safari/iOS (necesario para que el clip se reproduzca
+ * y se pueda guardar directamente en Fotos / redes sociales). Si ninguno es
+ * compatible (navegadores Chromium/Firefox sin soporte de MP4), MediaRecorder
+ * se instancia sin `mimeType` y el propio navegador cae a su formato por
+ * defecto (típicamente WebM), que ya queda cubierto por `extensionForMimeType`.
  */
-const PREFERRED_MIME_TYPES = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm']
+const PREFERRED_MIME_TYPES = [
+  'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+  'video/mp4;codecs=avc1',
+  'video/mp4',
+]
 
 function pickSupportedMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined
@@ -87,6 +93,11 @@ export function useVideoRecorder(): UseVideoRecorderResult {
       streamRef.current = stream
 
       if (videoPreviewRef.current) {
+        // 'webkit-playsinline' es el atributo legacy que Safari iOS (<14)
+        // necesita además del estándar `playsinline`/`playsInline`: sin él,
+        // iOS puede forzar la reproducción a pantalla completa o bloquear la
+        // captura de video, entregando solo el track de audio.
+        videoPreviewRef.current.setAttribute('webkit-playsinline', 'true')
         videoPreviewRef.current.srcObject = stream
         await videoPreviewRef.current.play().catch(() => undefined)
       }

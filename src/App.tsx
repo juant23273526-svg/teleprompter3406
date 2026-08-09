@@ -91,6 +91,16 @@ export default function App() {
   } = useVideoRecorder()
   const isRecording = recorderStatus === 'recording'
 
+  // Al iniciar a grabar, oculta automáticamente el panel lateral en móviles
+  // para que la cámara y el texto ocupen el 100% del viewport. En escritorio
+  // no tiene efecto: ControlPanel siempre se muestra ahí sin importar
+  // isPanelOpen (ver md:flex en su propio className).
+  useEffect(() => {
+    if (isRecording) {
+      setIsPanelOpen(false)
+    }
+  }, [isRecording])
+
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const handleStart = useCallback(() => {
@@ -206,23 +216,29 @@ export default function App() {
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
-      {/* Fondo de cámara a pantalla completa: solo se monta mientras se está
-          grabando. MediaRecorder captura el MediaStream de getUserMedia
-          directamente, así que el archivo grabado siempre queda limpio (cámara
-          + mic) sin esta capa de teleprónpter, sin importar lo que se vea aquí. */}
-      {isRecording && (
-        <video
-          ref={videoPreviewRef}
-          muted
-          playsInline
-          autoPlay
-          className="fixed inset-0 z-0 h-full w-full object-cover"
-        />
-      )}
+      {/* Fondo de cámara a pantalla completa: el <video> queda montado
+          siempre (nunca condicionado a isRecording) para que la ref esté
+          disponible desde el primer frame en que useVideoRecorder intenta
+          asignarle el stream; si se montara solo cuando isRecording es true
+          se perdería la carrera contra el propio cambio de estado que activa
+          esa condición. Se oculta con opacidad mientras no hay grabación.
+          MediaRecorder captura el MediaStream de getUserMedia directamente,
+          así que el archivo grabado siempre queda limpio (cámara + mic) sin
+          esta capa de teleprónpter, sin importar lo que se vea aquí. */}
+      <video
+        ref={videoPreviewRef}
+        muted
+        playsInline
+        autoPlay
+        className={[
+          'fixed inset-0 z-0 h-full w-full object-cover transition-opacity duration-300',
+          isRecording ? 'opacity-100' : 'pointer-events-none opacity-0',
+        ].join(' ')}
+      />
 
       {/* Contenido de la app (panel + teleprónpter): flota por encima del
           fondo de cámara. */}
-      <div className="relative z-10 flex h-full w-full flex-col overflow-hidden md:flex-row">
+      <div className="relative z-20 flex h-full w-full flex-col overflow-hidden md:flex-row">
         <ControlPanel
           script={script}
           onScriptChange={setScript}
