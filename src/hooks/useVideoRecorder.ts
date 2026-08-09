@@ -8,19 +8,38 @@ interface UseVideoRecorderResult {
   errorMessage: string | null
   /** Ref para el <video> de vista previa: úsalo para encuadrar la cámara mientras grabas. */
   videoPreviewRef: RefObject<HTMLVideoElement>
+  /** Blob de la última toma grabada, pendiente de revisión en el modal de vista previa. */
+  previewBlob: Blob | null
+  /** MIME type real con el que se grabó el blob (determina la extensión al guardar). */
+  previewMimeType: string | null
   start: () => Promise<void>
   stop: () => void
+  /** Descarga el blob en vista previa y limpia el estado. */
+  confirmDownload: () => void
+  /** Descarta el blob en vista previa sin guardarlo, liberando la memoria. */
+  discardPreview: () => void
 }
 
-const PREFERRED_MIME_TYPES = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm']
+/**
+ * Orden de preferencia de MIME types para MediaRecorder. Safari/iOS no
+ * soporta WebM en absoluto pero sí grabación a MP4 (H.264) desde iOS 14.3+,
+ * así que probamos primero los formatos MP4 antes de caer a WebM para
+ * navegadores basados en Chromium/Firefox.
+ */
+const PREFERRED_MIME_TYPES = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm']
 
 function pickSupportedMimeType(): string | undefined {
   if (typeof MediaRecorder === 'undefined') return undefined
   return PREFERRED_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type))
 }
 
+/** iOS/Safari solo puede reproducir y guardar .mp4; el resto usa .webm como fallback. */
+function extensionForMimeType(mimeType: string): string {
+  return mimeType.includes('mp4') ? 'mp4' : 'webm'
+}
+
 function downloadBlob(blob: Blob, mimeType: string): void {
-  const extension = mimeType.includes('mp4') ? 'mp4' : 'webm'
+  const extension = extensionForMimeType(mimeType)
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
   const url = URL.createObjectURL(blob)
 
@@ -37,12 +56,15 @@ function downloadBlob(blob: Blob, mimeType: string): void {
 /**
  * Grabación de video independiente del teleprónpter: captura cámara + mic
  * directamente con getUserMedia/MediaRecorder (nunca el texto en pantalla,
- * porque no se compone con ningún canvas ni captura de la ventana) y
- * dispara la descarga del archivo al detener.
+ * porque no se compone con ningún canvas ni captura de la ventana). Al
+ * detener, el blob queda en `previewBlob` para que la UI muestre un modal de
+ * revisión antes de guardar nada en disco.
  */
 export function useVideoRecorder(): UseVideoRecorderResult {
   const [status, setStatus] = useState<VideoRecorderStatus>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null)
+  const [previewMimeType, setPreviewMimeType] = useState<string | null>(null)
 
   const videoPreviewRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -78,10 +100,13 @@ export function useVideoRecorder(): UseVideoRecorderResult {
       }
 
       recorder.onstop = () => {
-        const finalMimeType = recorder.mimeType || 'video/webm'
+        const finalMimeType = recorder.mimeType || mimeType || 'video/webm'
         const blob = new Blob(chunksRef.current, { type: finalMimeType })
         chunksRef.current = []
-        if (blob.size > 0) downloadBlob(blob, finalMimeType)
+        if (blob.size > 0) {
+          setPreviewBlob(blob)
+          setPreviewMimeType(finalMimeType)
+        }
         releaseStream()
         setStatus('idle')
       }
@@ -100,13 +125,28 @@ export function useVideoRecorder(): UseVideoRecorderResult {
   const stop = useCallback(() => {
     const recorder = recorderRef.current
     if (recorder && recorder.state !== 'inactive') {
-      // El propio evento 'onstop' del recorder hace la descarga y libera la cámara.
+      // El propio evento 'onstop' del recorder deja el blob listo en
+      // previewBlob y libera la cámara; la descarga ahora es manual desde
+      // el modal de vista previa (VideoPreviewModal).
       recorder.stop()
     } else {
       releaseStream()
       setStatus('idle')
     }
   }, [releaseStream])
+
+  const confirmDownload = useCallback(() => {
+    if (previewBlob && previewMimeType) {
+      downloadBlob(previewBlob, previewMimeType)
+    }
+    setPreviewBlob(null)
+    setPreviewMimeType(null)
+  }, [previewBlob, previewMimeType])
+
+  const discardPreview = useCallback(() => {
+    setPreviewBlob(null)
+    setPreviewMimeType(null)
+  }, [])
 
   // Al desmontar, cortar cualquier grabación en curso y apagar la cámara.
   useEffect(() => {
@@ -119,5 +159,15 @@ export function useVideoRecorder(): UseVideoRecorderResult {
     }
   }, [releaseStream])
 
-  return { status, errorMessage, videoPreviewRef, start, stop }
+  return {
+    status,
+    errorMessage,
+    videoPreviewRef,
+    previewBlob,
+    previewMimeType,
+    start,
+    stop,
+    confirmDownload,
+    discardPreview,
+  }
 }

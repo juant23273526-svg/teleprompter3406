@@ -1,7 +1,6 @@
 import { AlertTriangle, Circle, Mic, MicOff, Play, RotateCcw, Square, Video } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { SpeechRecognitionStatus } from '../hooks/useSpeechRecognition'
-import { useVideoRecorder } from '../hooks/useVideoRecorder'
 import type { ScrollMode } from '../types'
 
 interface ControlPanelProps {
@@ -20,6 +19,12 @@ interface ControlPanelProps {
   onScrollModeChange: (mode: ScrollMode) => void
   autoScrollSpeed: number
   onAutoScrollSpeedChange: (speed: number) => void
+  isRecording: boolean
+  recorderError: string | null
+  onStartRecording: () => void
+  onStopRecording: () => void
+  /** En móviles, controla si el panel (drawer) está visible; en escritorio siempre se muestra. */
+  isPanelOpen: boolean
 }
 
 const SPEECH_STATUS_CONFIG: Record<
@@ -59,6 +64,11 @@ export function ControlPanel({
   onScrollModeChange,
   autoScrollSpeed,
   onAutoScrollSpeedChange,
+  isRecording,
+  recorderError,
+  onStartRecording,
+  onStopRecording,
+  isPanelOpen,
 }: ControlPanelProps) {
   const status = SPEECH_STATUS_CONFIG[speechStatus]
   const StatusIcon = status.Icon
@@ -67,20 +77,13 @@ export function ControlPanel({
   // controla el scroll directamente con la rueda o el teclado.
   const canToggleActive = scrollMode === 'voice' || scrollMode === 'auto'
 
-  // Grabadora de video independiente del teleprónpter: su propio ciclo de
-  // vida (cámara, MediaRecorder, descarga) no depende de nada del guion ni
-  // del modo de desplazamiento.
-  const {
-    status: recorderStatus,
-    errorMessage: recorderError,
-    videoPreviewRef,
-    start: startRecording,
-    stop: stopRecording,
-  } = useVideoRecorder()
-  const isRecording = recorderStatus === 'recording'
-
   return (
-    <aside className="flex h-full w-full flex-col gap-5 overflow-y-auto border-b border-slate-800 bg-slate-900 p-5 md:w-96 md:border-b-0 md:border-r">
+    <aside
+      className={[
+        isPanelOpen ? 'flex' : 'hidden',
+        'h-full w-full flex-col gap-5 overflow-y-auto border-b border-slate-800 bg-slate-900 p-5 md:flex md:w-96 md:border-b-0 md:border-r',
+      ].join(' ')}
+    >
       <div>
         <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
         <p className="text-sm text-slate-400">Reconocimiento de voz nativo del navegador</p>
@@ -169,33 +172,24 @@ export function ControlPanel({
 
       <div className="flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-950 p-3">
         <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Grabadora de video</span>
+        <p className="text-xs text-slate-500">
+          {isRecording
+            ? 'La cámara ocupa el fondo de pantalla completo mientras grabas.'
+            : 'La toma se graba limpia (sin el texto del teleprónpter en pantalla).'}
+        </p>
 
-        <div className="relative aspect-video w-full overflow-hidden rounded-md bg-black">
-          <video
-            ref={videoPreviewRef}
-            muted
-            playsInline
-            autoPlay
-            className={`h-full w-full object-cover ${isRecording ? '' : 'invisible'}`}
-          />
-          {!isRecording && (
-            <div className="absolute inset-0 flex items-center justify-center text-slate-600">
-              <Video className="h-6 w-6" />
-            </div>
-          )}
-          {isRecording && (
-            <span className="absolute left-2 top-2 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-              REC
-            </span>
-          )}
-        </div>
+        {isRecording && (
+          <span className="flex w-fit items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+            REC
+          </span>
+        )}
 
         {recorderError && <p className="text-xs text-red-400">{recorderError}</p>}
 
         <button
           type="button"
-          onClick={isRecording ? stopRecording : startRecording}
+          onClick={isRecording ? onStopRecording : onStartRecording}
           className={[
             'flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition',
             isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-slate-700 text-white hover:bg-slate-600',
@@ -204,7 +198,7 @@ export function ControlPanel({
           {isRecording ? (
             <>
               <Square className="h-4 w-4" />
-              Detener y Descargar Video
+              Detener Grabación
             </>
           ) : (
             <>

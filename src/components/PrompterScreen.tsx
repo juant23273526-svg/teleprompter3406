@@ -59,7 +59,13 @@ export function PrompterScreen({
   }
 
   return (
-    <div className="relative flex-1 overflow-hidden bg-slate-950">
+    <div className="relative z-10 flex-1 overflow-hidden bg-slate-950/60">
+      {/* Capa semi-transparente para legibilidad: cuando la cámara está activa de
+          fondo (position: fixed, z-index: 0, en App), este contenedor flota
+          encima (z-index: 10) y oscurece un poco el video para que el texto
+          siga siendo legible. */}
+      <div className="pointer-events-none absolute inset-0 bg-black/35" />
+
       {/* Overlay de la línea de lectura central: guía visual fija en medio de la pantalla,
           independiente del scroll del guion. */}
       <div className="pointer-events-none absolute inset-x-0 top-1/2 z-10 h-24 -translate-y-1/2 border-y border-cyan-400/20 bg-cyan-400/5" />

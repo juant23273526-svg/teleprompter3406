@@ -1,7 +1,10 @@
+import { Menu, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
+import { VideoPreviewModal } from './components/VideoPreviewModal'
 import { useSpeechRecognition } from './hooks/useSpeechRecognition'
+import { useVideoRecorder } from './hooks/useVideoRecorder'
 import type { ScrollMode } from './types'
 import { findBestMatch } from './utils/fuzzyMatch'
 
@@ -40,6 +43,10 @@ export default function App() {
   // voz (micrófono escuchando) como para el modo automático (motor de
   // scroll corriendo). En modo manual no se usa: no hay proceso que iniciar.
   const [isActive, setIsActive] = useState(false)
+  // Panel de configuración (guion, controles, grabadora): en escritorio
+  // siempre visible como sidebar; en iPhone/móvil se puede ocultar con el
+  // botón flotante para que la cámara y el texto ocupen el 100% del viewport.
+  const [isPanelOpen, setIsPanelOpen] = useState(true)
 
   const lines = useMemo(() => script.split('\n'), [script])
 
@@ -66,6 +73,23 @@ export default function App() {
     stop: stopSpeech,
     reset: resetSpeech,
   } = useSpeechRecognition({ onResult: handleSpeechResult, lang: 'es-MX' })
+
+  // Grabadora de video independiente del teleprónpter: su propio ciclo de
+  // vida (cámara, MediaRecorder, blob en vista previa) no depende del guion
+  // ni del modo de desplazamiento. Vive en App porque el preview de cámara
+  // se usa como fondo de pantalla completa detrás del teleprónpter.
+  const {
+    status: recorderStatus,
+    errorMessage: recorderError,
+    videoPreviewRef,
+    previewBlob,
+    previewMimeType,
+    start: startRecording,
+    stop: stopRecording,
+    confirmDownload,
+    discardPreview,
+  } = useVideoRecorder()
+  const isRecording = recorderStatus === 'recording'
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -144,6 +168,10 @@ export default function App() {
     }
 
     container.addEventListener('wheel', markUserInteraction, { passive: true })
+    // 'touchstart' se registra además de 'touchmove': en iPhone/iOS el dedo
+    // puede tocar y mantenerse quieto un instante antes de mover, y sin este
+    // listener el auto-scroll seguía avanzando durante ese primer contacto.
+    container.addEventListener('touchstart', markUserInteraction, { passive: true })
     container.addEventListener('touchmove', markUserInteraction, { passive: true })
     container.addEventListener('pointerdown', markUserInteraction, { passive: true })
 
@@ -170,38 +198,77 @@ export default function App() {
     return () => {
       cancelAnimationFrame(animationFrameId)
       container.removeEventListener('wheel', markUserInteraction)
+      container.removeEventListener('touchstart', markUserInteraction)
       container.removeEventListener('touchmove', markUserInteraction)
       container.removeEventListener('pointerdown', markUserInteraction)
     }
   }, [scrollMode, isActive])
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100 md:flex-row">
-      <ControlPanel
-        script={script}
-        onScriptChange={setScript}
-        fontSize={fontSize}
-        onFontSizeChange={setFontSize}
-        speechStatus={speechStatus}
-        speechError={speechError}
-        lastTranscript={lastTranscript}
-        isActive={isActive}
-        onStart={handleStart}
-        onStop={handleStop}
-        onReset={handleReset}
-        scrollMode={scrollMode}
-        onScrollModeChange={handleScrollModeChange}
-        autoScrollSpeed={autoScrollSpeed}
-        onAutoScrollSpeedChange={setAutoScrollSpeed}
-      />
-      <PrompterScreen
-        lines={lines}
-        currentIndex={currentIndex}
-        fontSize={fontSize}
-        onLineClick={handleLineClick}
-        scrollMode={scrollMode}
-        scrollContainerRef={scrollContainerRef}
-      />
+    <div className="relative h-screen w-screen overflow-hidden bg-slate-950 text-slate-100">
+      {/* Fondo de cámara a pantalla completa: solo se monta mientras se está
+          grabando. MediaRecorder captura el MediaStream de getUserMedia
+          directamente, así que el archivo grabado siempre queda limpio (cámara
+          + mic) sin esta capa de teleprónpter, sin importar lo que se vea aquí. */}
+      {isRecording && (
+        <video
+          ref={videoPreviewRef}
+          muted
+          playsInline
+          autoPlay
+          className="fixed inset-0 z-0 h-full w-full object-cover"
+        />
+      )}
+
+      {/* Contenido de la app (panel + teleprónpter): flota por encima del
+          fondo de cámara. */}
+      <div className="relative z-10 flex h-full w-full flex-col overflow-hidden md:flex-row">
+        <ControlPanel
+          script={script}
+          onScriptChange={setScript}
+          fontSize={fontSize}
+          onFontSizeChange={setFontSize}
+          speechStatus={speechStatus}
+          speechError={speechError}
+          lastTranscript={lastTranscript}
+          isActive={isActive}
+          onStart={handleStart}
+          onStop={handleStop}
+          onReset={handleReset}
+          scrollMode={scrollMode}
+          onScrollModeChange={handleScrollModeChange}
+          autoScrollSpeed={autoScrollSpeed}
+          onAutoScrollSpeedChange={setAutoScrollSpeed}
+          isRecording={isRecording}
+          recorderError={recorderError}
+          onStartRecording={startRecording}
+          onStopRecording={stopRecording}
+          isPanelOpen={isPanelOpen}
+        />
+        <PrompterScreen
+          lines={lines}
+          currentIndex={currentIndex}
+          fontSize={fontSize}
+          onLineClick={handleLineClick}
+          scrollMode={scrollMode}
+          scrollContainerRef={scrollContainerRef}
+        />
+      </div>
+
+      {/* Toggle flotante solo en móvil/iPhone: oculta el panel para que la
+          cámara y el texto del teleprónpter ocupen el 100% del viewport. */}
+      <button
+        type="button"
+        onClick={() => setIsPanelOpen((open) => !open)}
+        aria-label={isPanelOpen ? 'Ocultar panel de configuración' : 'Mostrar panel de configuración'}
+        className="fixed right-4 top-4 z-30 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900/90 text-slate-100 shadow-lg backdrop-blur transition hover:bg-slate-800 md:hidden"
+      >
+        {isPanelOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+      </button>
+
+      {previewBlob && previewMimeType && (
+        <VideoPreviewModal blob={previewBlob} mimeType={previewMimeType} onSave={confirmDownload} onDiscard={discardPreview} />
+      )}
     </div>
   )
 }
