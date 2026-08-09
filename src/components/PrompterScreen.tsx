@@ -88,51 +88,59 @@ export function PrompterScreen({
   }, [fontSize])
 
   return (
-    // Overlay del teleprónpter: flota centrado (z-10) por encima del <video>
-    // de cámara (z-0) dentro del stage de 60vh/60% que arma App.tsx; no
-    // define su propio alto de pantalla, sino que llena ese recuadro.
-    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 sm:p-6">
-      {/* Contenedor flotante: fondo oscuro semitransparente + blur para
-          legibilidad sobre la cámara en vivo. */}
-      <div className="relative flex h-full w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/60 shadow-2xl backdrop-blur-sm">
-        <div
-          ref={scrollContainerRef}
-          tabIndex={0}
-          className="h-full overflow-y-auto outline-none"
-          style={{ WebkitMaskImage: readingWindowMask, maskImage: readingWindowMask }}
-        >
-          <div className="mx-auto max-w-3xl space-y-6 px-6 py-[50vh] md:px-10">
-            {lines.map((line, index) => {
-              if (!line.trim()) {
-                return <div key={index} aria-hidden className="h-4" />
-              }
+    // Overlay del teleprónpter: llena por completo (absolute inset-0, w-full,
+    // h-full) el recuadro del <video> de cámara (z-0) dentro del stage que
+    // arma App.tsx, con fondo 100% transparente — sin tarjeta, blur ni bg
+    // oscuro — para máxima visibilidad de la cámara detrás del texto.
+    <div
+      ref={scrollContainerRef}
+      tabIndex={0}
+      className="absolute inset-0 z-10 h-full w-full overflow-y-auto bg-transparent outline-none will-change-transform"
+      style={{
+        WebkitMaskImage: readingWindowMask,
+        maskImage: readingWindowMask,
+        // translateZ(0) aísla este contenedor en su propia capa de
+        // composición (aceleración por hardware) para que el scroll continuo
+        // no compita por el hilo principal con la captura de MediaRecorder
+        // en Safari/iOS, evitando el congelamiento de fotogramas de cámara.
+        transform: 'translateZ(0)',
+        WebkitTransform: 'translateZ(0)',
+      }}
+    >
+      <div className="mx-auto max-w-3xl space-y-6 px-6 py-[50vh] md:px-10">
+        {lines.map((line, index) => {
+          if (!line.trim()) {
+            return <div key={index} aria-hidden className="h-4" />
+          }
 
-              const isActive = scrollMode === 'voice' && index === currentIndex
-              const isPast = scrollMode === 'voice' && index < currentIndex
+          const isActive = scrollMode === 'voice' && index === currentIndex
+          const isPast = scrollMode === 'voice' && index < currentIndex
 
-              return (
-                <p
-                  key={index}
-                  ref={(el) => {
-                    lineRefs.current[index] = el
-                  }}
-                  onClick={() => handleLineClick(index)}
-                  className={[
-                    'cursor-pointer rounded-lg px-2 py-1 text-center font-medium transition-all duration-300 ease-out',
-                    isActive
-                      ? 'scale-105 text-white opacity-100 drop-shadow-[0_0_18px_rgba(34,211,238,0.45)]'
-                      : isPast
-                        ? 'text-slate-600 opacity-40 hover:opacity-70'
-                        : 'text-slate-300 opacity-60 hover:opacity-90',
-                  ].join(' ')}
-                  style={{ fontSize: `${fontSize}px`, lineHeight: LINE_HEIGHT_RATIO }}
-                >
-                  {line}
-                </p>
-              )
-            })}
-          </div>
-        </div>
+          // Sombra negra pronunciada siempre presente (legibilidad del texto
+          // blanco sobre cualquier tono que capture la cámara de fondo); el
+          // renglón activo suma además el resplandor cian, encadenando un
+          // segundo drop-shadow en el mismo filter.
+          const textShadowFilter = isActive
+            ? 'drop-shadow(0 2px 4px rgba(0,0,0,0.8)) drop-shadow(0 0 18px rgba(34,211,238,0.45))'
+            : 'drop-shadow(0 2px 4px rgba(0,0,0,0.8))'
+
+          return (
+            <p
+              key={index}
+              ref={(el) => {
+                lineRefs.current[index] = el
+              }}
+              onClick={() => handleLineClick(index)}
+              className={[
+                'cursor-pointer rounded-lg px-2 py-1 text-center font-medium text-white transition-all duration-300 ease-out',
+                isActive ? 'scale-105 opacity-100' : isPast ? 'opacity-35 hover:opacity-60' : 'opacity-70 hover:opacity-90',
+              ].join(' ')}
+              style={{ fontSize: `${fontSize}px`, lineHeight: LINE_HEIGHT_RATIO, filter: textShadowFilter }}
+            >
+              {line}
+            </p>
+          )
+        })}
       </div>
     </div>
   )
