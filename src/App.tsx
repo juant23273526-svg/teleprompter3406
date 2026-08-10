@@ -249,12 +249,11 @@ export default function App() {
           cámara, sin el texto del teleprónpter superpuesto. El <video> queda
           montado siempre (nunca condicionado a isRecording), así el
           MediaStream de getUserMedia nunca se degrada a solo audio por
-          perder su elemento de destino. MediaRecorder graba directo de ese
-          MediaStream (streamRef en useVideoRecorder.ts) — nunca lee este
-          <video>, que es solo la vista previa en pantalla —, así que no hay
-          nada que "capturar por canvas": eso solo agregaría un dibujado por
-          frame en el hilo principal, justo lo que causa el congelamiento que
-          se busca evitar. */}
+          perder su elemento de destino. Este <video> es también la fuente
+          que useVideoRecorder.ts redibuja frame a frame sobre un <canvas>
+          oculto (nunca montado en el DOM) para alimentar al MediaRecorder
+          vía canvas.captureStream() — ver el comentario en ese hook para el
+          porqué de ese desacople. */}
       <div className="app-grid-camera relative overflow-hidden rounded-2xl bg-black">
         <video
           ref={videoPreviewRef}
