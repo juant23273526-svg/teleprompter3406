@@ -1,4 +1,4 @@
-import { Video } from 'lucide-react'
+import { Menu, Square, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
@@ -43,6 +43,9 @@ export default function App() {
   // voz (micrófono escuchando) como para el modo automático (motor de
   // scroll corriendo). En modo manual no se usa: no hay proceso que iniciar.
   const [isActive, setIsActive] = useState(false)
+  // Drawer de ajustes (guion, velocidad, tamaño de letra): flotante, activado
+  // por el botón de hamburguesa; nunca ocupa espacio fijo en el layout.
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   const lines = useMemo(() => script.split('\n'), [script])
 
@@ -88,6 +91,14 @@ export default function App() {
     discardPreview,
   } = useVideoRecorder()
   const isRecording = recorderStatus === 'recording'
+
+  // Al iniciar a grabar, cierra el drawer de ajustes automáticamente para
+  // dejar la pantalla limpia (teleprónpter + cámara a la vista).
+  useEffect(() => {
+    if (isRecording) {
+      setIsMenuOpen(false)
+    }
+  }, [isRecording])
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -203,41 +214,14 @@ export default function App() {
   }, [scrollMode, isActive])
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-950 text-slate-100 landscape:flex-row">
-      {/* Stage: 60% superior en vertical (portrait) / 60% izquierdo en
-          horizontal (landscape). El <video> queda montado siempre (nunca
-          condicionado a isRecording), así el MediaStream de getUserMedia
-          nunca se degrada a solo audio por perder su elemento de destino.
-          MediaRecorder graba directo del MediaStream que devuelve
-          getUserMedia (streamRef en useVideoRecorder.ts) — nunca lee este
-          <video>, que es solo la vista previa en pantalla — así que no hay
-          nada que "capturar por canvas": eso solo agregaría un dibujado por
-          frame en el hilo principal, justo lo que causa el congelamiento
-          que se busca evitar. */}
-      <div className="relative h-[60vh] w-full shrink-0 overflow-hidden bg-black landscape:h-full landscape:w-[60%]">
-        <video
-          ref={videoPreviewRef}
-          muted
-          playsInline
-          autoPlay
-          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover will-change-transform"
-          style={{
-            // Capa de composición propia, aislada de la del overlay con
-            // scroll (ver PrompterScreen.tsx): aunque ambos son "hermanos" en
-            // el DOM (no hace falta un portal para separarlos), promoverlos a
-            // capas GPU distintas evita que el compositor tenga que
-            // repintarlos juntos en cada frame de scroll.
-            transform: 'translateZ(0)',
-            WebkitTransform: 'translateZ(0)',
-          }}
-        />
-
-        {!isRecording && (
-          <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center text-slate-700">
-            <Video className="h-10 w-10" />
-          </div>
-        )}
-
+    // .app-grid (index.css): 3 franjas apiladas en vertical (prompter 35vh /
+    // camera 55vh / actions 10vh) y 2 columnas en horizontal (prompter+actions
+    // a la izquierda, camera a todo el alto a la derecha). El teleprónpter y
+    // el <video> son módulos de DOM separados a propósito (nunca uno encima
+    // del otro) para que Safari/iOS no tenga que componerlos en la misma capa
+    // durante grabaciones largas.
+    <div className="app-grid overflow-hidden bg-slate-950 text-slate-100">
+      <div className="app-grid-prompter overflow-hidden rounded-b-2xl bg-slate-900">
         <PrompterScreen
           lines={lines}
           currentIndex={currentIndex}
@@ -248,29 +232,104 @@ export default function App() {
         />
       </div>
 
-      {/* 40% inferior (portrait) / derecho (landscape): controles fijos,
-          siempre visibles, sin drawer ni botón para ocultarlos. */}
-      <ControlPanel
-        script={script}
-        onScriptChange={setScript}
-        fontSize={fontSize}
-        onFontSizeChange={setFontSize}
-        speechStatus={speechStatus}
-        speechError={speechError}
-        lastTranscript={lastTranscript}
-        isActive={isActive}
-        onStart={handleStart}
-        onStop={handleStop}
-        onReset={handleReset}
-        scrollMode={scrollMode}
-        onScrollModeChange={handleScrollModeChange}
-        autoScrollSpeed={autoScrollSpeed}
-        onAutoScrollSpeedChange={setAutoScrollSpeed}
-        isRecording={isRecording}
-        recorderError={recorderError}
-        onStartRecording={startRecording}
-        onStopRecording={stopRecording}
-      />
+      {/* Módulo de cámara: contiene únicamente la vista previa limpia de la
+          cámara, sin el texto del teleprónpter superpuesto. El <video> queda
+          montado siempre (nunca condicionado a isRecording), así el
+          MediaStream de getUserMedia nunca se degrada a solo audio por
+          perder su elemento de destino. MediaRecorder graba directo de ese
+          MediaStream (streamRef en useVideoRecorder.ts) — nunca lee este
+          <video>, que es solo la vista previa en pantalla —, así que no hay
+          nada que "capturar por canvas": eso solo agregaría un dibujado por
+          frame en el hilo principal, justo lo que causa el congelamiento que
+          se busca evitar. */}
+      <div className="app-grid-camera relative overflow-hidden rounded-2xl bg-black">
+        <video
+          ref={videoPreviewRef}
+          muted
+          playsInline
+          autoPlay
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover will-change-transform"
+          style={{
+            // Capa de composición propia, aislada de la del contenedor con
+            // scroll del teleprónpter (que ahora ni siquiera es su vecino de
+            // DOM): promoverlo a su propia capa GPU evita que el compositor
+            // tenga que repintarlo junto con el resto de la interfaz.
+            transform: 'translateZ(0)',
+            WebkitTransform: 'translateZ(0)',
+          }}
+        />
+
+        {!isRecording && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-700">
+            <Video className="h-10 w-10" />
+          </div>
+        )}
+      </div>
+
+      {/* Módulo de acciones: el botón principal de grabación, siempre a la
+          vista sin importar si el drawer de ajustes está abierto o no. */}
+      <div className="app-grid-actions flex flex-col items-center justify-center gap-1.5 px-4">
+        {recorderError && <p className="text-center text-[11px] text-red-400">{recorderError}</p>}
+        <button
+          type="button"
+          onClick={isRecording ? stopRecording : startRecording}
+          className={[
+            'flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition',
+            isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400',
+          ].join(' ')}
+        >
+          {isRecording ? (
+            <>
+              <Square className="h-4 w-4" />
+              Detener Grabación
+            </>
+          ) : (
+            <>
+              <Video className="h-4 w-4" />
+              Iniciar Grabación
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Menú de hamburguesa flotante: siempre por encima de todo (z-50). El
+          drawer de ajustes (z-40) que despliega es un overlay, nunca ocupa
+          espacio fijo en el grid de arriba. */}
+      <button
+        type="button"
+        onClick={() => setIsMenuOpen((open) => !open)}
+        aria-label={isMenuOpen ? 'Cerrar menú de ajustes' : 'Abrir menú de ajustes'}
+        className="fixed right-4 top-4 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900/90 text-slate-100 shadow-lg backdrop-blur transition hover:bg-slate-800"
+      >
+        {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+      </button>
+
+      {isMenuOpen && (
+        <div
+          className="fixed inset-0 z-40 flex justify-end bg-black/50"
+          onClick={() => setIsMenuOpen(false)}
+        >
+          <div className="h-full w-full max-w-sm shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <ControlPanel
+              script={script}
+              onScriptChange={setScript}
+              fontSize={fontSize}
+              onFontSizeChange={setFontSize}
+              speechStatus={speechStatus}
+              speechError={speechError}
+              lastTranscript={lastTranscript}
+              isActive={isActive}
+              onStart={handleStart}
+              onStop={handleStop}
+              onReset={handleReset}
+              scrollMode={scrollMode}
+              onScrollModeChange={handleScrollModeChange}
+              autoScrollSpeed={autoScrollSpeed}
+              onAutoScrollSpeedChange={setAutoScrollSpeed}
+            />
+          </div>
+        </div>
+      )}
 
       {previewBlob && previewMimeType && (
         <VideoPreviewModal

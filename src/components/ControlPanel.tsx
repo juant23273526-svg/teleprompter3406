@@ -1,4 +1,4 @@
-import { AlertTriangle, Circle, Mic, MicOff, Play, RotateCcw, Square, Video } from 'lucide-react'
+import { AlertTriangle, Circle, Mic, MicOff, Play, RotateCcw, Square } from 'lucide-react'
 import { memo } from 'react'
 import type { ComponentType } from 'react'
 import type { SpeechRecognitionStatus } from '../hooks/useSpeechRecognition'
@@ -20,10 +20,6 @@ interface ControlPanelProps {
   onScrollModeChange: (mode: ScrollMode) => void
   autoScrollSpeed: number
   onAutoScrollSpeedChange: (speed: number) => void
-  isRecording: boolean
-  recorderError: string | null
-  onStartRecording: () => void
-  onStopRecording: () => void
 }
 
 const SPEECH_STATUS_CONFIG: Record<
@@ -70,10 +66,6 @@ export const ControlPanel = memo(function ControlPanel({
   onScrollModeChange,
   autoScrollSpeed,
   onAutoScrollSpeedChange,
-  isRecording,
-  recorderError,
-  onStartRecording,
-  onStopRecording,
 }: ControlPanelProps) {
   const status = SPEECH_STATUS_CONFIG[speechStatus]
   const StatusIcon = status.Icon
@@ -83,10 +75,10 @@ export const ControlPanel = memo(function ControlPanel({
   const canToggleActive = scrollMode === 'voice' || scrollMode === 'auto'
 
   return (
-    // 40% inferior (portrait) / derecho (landscape) de la pantalla, siempre
-    // visible y con scroll propio: sin drawer que ocultar ni botón de cerrar,
-    // así el <video> del stage nunca pierde foco ni se desmonta.
-    <aside className="flex h-[40vh] w-full shrink-0 flex-col gap-5 overflow-y-auto border-t border-slate-800 bg-slate-900 p-5 landscape:h-full landscape:w-[40%] landscape:border-l landscape:border-t-0">
+    // Contenido del drawer de ajustes: App.tsx es quien lo posiciona flotando
+    // (fixed) y lo muestra/oculta con el menú de hamburguesa; este panel solo
+    // necesita llenar ese contenedor con su propio scroll.
+    <aside className="flex h-full w-full flex-col gap-5 overflow-y-auto bg-slate-900 p-5">
       <div>
         <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
         <p className="text-sm text-slate-400">Reconocimiento de voz nativo del navegador</p>
@@ -171,45 +163,6 @@ export const ControlPanel = memo(function ControlPanel({
             />
           </div>
         )}
-      </div>
-
-      <div className="flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-950 p-3">
-        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Grabadora de video</span>
-        <p className="text-xs text-slate-500">
-          {isRecording
-            ? 'Cámara en vivo arriba mientras grabas.'
-            : 'La toma se graba limpia (sin el texto del teleprónpter en pantalla).'}
-        </p>
-
-        {isRecording && (
-          <span className="flex w-fit items-center gap-1 rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-400">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
-            REC
-          </span>
-        )}
-
-        {recorderError && <p className="text-xs text-red-400">{recorderError}</p>}
-
-        <button
-          type="button"
-          onClick={isRecording ? onStopRecording : onStartRecording}
-          className={[
-            'flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition',
-            isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-slate-700 text-white hover:bg-slate-600',
-          ].join(' ')}
-        >
-          {isRecording ? (
-            <>
-              <Square className="h-4 w-4" />
-              Detener Grabación
-            </>
-          ) : (
-            <>
-              <Video className="h-4 w-4" />
-              Iniciar Grabación
-            </>
-          )}
-        </button>
       </div>
 
       <div className={`rounded-lg border border-slate-700 bg-slate-950 p-3 transition-opacity ${isVoiceMode ? '' : 'opacity-50'}`}>

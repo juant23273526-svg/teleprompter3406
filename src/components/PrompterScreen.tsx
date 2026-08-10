@@ -78,14 +78,14 @@ export const PrompterScreen = memo(function PrompterScreen({
   }
 
   return (
-    // Overlay del teleprónpter: llena por completo (absolute inset-0, w-full,
-    // h-full) el recuadro del <video> de cámara (z-0) dentro del stage que
-    // arma App.tsx, con fondo 100% transparente — sin tarjeta, blur ni bg
-    // oscuro — para máxima visibilidad de la cámara detrás del texto.
+    // Llena su propio módulo (la franja/columna "prompter" del grid que arma
+    // App.tsx) sin superponerse al <video>: son dos elementos de DOM
+    // físicamente separados, no una capa flotando encima de otra, para que
+    // Safari/iOS no tenga que componerlos juntos durante grabaciones largas.
     <div
       ref={scrollContainerRef}
       tabIndex={0}
-      className="absolute inset-0 z-10 h-full w-full overflow-y-auto bg-transparent outline-none will-change-transform"
+      className="h-full w-full overflow-y-auto bg-transparent outline-none will-change-transform"
       style={{
         WebkitMaskImage: READING_WINDOW_MASK,
         maskImage: READING_WINDOW_MASK,

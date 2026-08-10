@@ -26,3 +26,49 @@ body {
   background-color: rgb(51 65 85);
   border-radius: 9999px;
 }
+
+/*
+ * Distribución principal de la app: teleprónpter, cámara y acciones de
+ * grabación como 3 módulos de DOM físicamente separados (nunca superpuestos)
+ * para que Safari/iOS no tenga que componer el <video> junto con el scroll
+ * del texto en la misma capa durante grabaciones largas.
+ *
+ * En vertical (portrait) se apilan en 3 franjas de alto fijo. En horizontal
+ * (landscape) se reagrupan en 2 columnas: la izquierda combina teleprónpter
+ * (arriba) + acciones (abajo), la derecha es la cámara a todo el alto. Ese
+ * reagrupamiento (mismos 3 módulos, distinta jerarquía visual) es lo que
+ * pide usar grid-template-areas en vez de un simple flexbox con `order`.
+ */
+.app-grid {
+  display: grid;
+  height: 100vh;
+  width: 100vw;
+  grid-template-columns: 1fr;
+  grid-template-rows: 35vh 55vh 10vh;
+  grid-template-areas:
+    'prompter'
+    'camera'
+    'actions';
+}
+
+@media (orientation: landscape) {
+  .app-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr auto;
+    grid-template-areas:
+      'prompter camera'
+      'actions camera';
+  }
+}
+
+.app-grid-prompter {
+  grid-area: prompter;
+}
+
+.app-grid-camera {
+  grid-area: camera;
+}
+
+.app-grid-actions {
+  grid-area: actions;
+}
