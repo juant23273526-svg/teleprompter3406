@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { memo, useCallback, useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import type { ScrollMode } from '../types'
 import { scrollElementToCenter, type ScrollAnimationHandle } from '../utils/smoothScroll'
@@ -12,13 +12,24 @@ interface PrompterScreenProps {
   scrollContainerRef: RefObject<HTMLDivElement>
 }
 
-/** Interlineado usado tanto en los renglones como en el cálculo de la ventana de lectura. */
+/** Interlineado usado en los renglones del guion. */
 const LINE_HEIGHT_RATIO = 1.5
-const VISIBLE_LINES = 2
-/** Zona de desvanecimiento (px) a cada lado de la ventana de 2 líneas antes de llegar a opacidad 0. */
-const FADE_MARGIN_PX = 36
 
-export function PrompterScreen({
+// Máscara CSS fija (ya no depende de fontSize): 70% central totalmente
+// opaco y 15% de desvanecimiento en cada borde. A tamaños de fuente típicos
+// esa franja opaca alcanza ~5 líneas de texto, dando margen para leer 2-3
+// frases por adelantado antes de que el scroll las desplace.
+const READING_WINDOW_MASK = 'linear-gradient(to bottom, transparent 0%, black 15%, black 85%, transparent 100%)'
+
+/**
+ * Memoizado: en modo voz, App.tsx actualiza currentIndex con cada frase
+ * reconocida, lo cual sí debe re-renderizar este componente (cambia qué
+ * línea se resalta). Pero memo evita que vuelva a renderizar cuando cambian
+ * props de estado ajenas a él (autoScrollSpeed, script, estado del
+ * grabador, etc.), reduciendo trabajo en el hilo principal mientras la
+ * cámara graba en paralelo.
+ */
+export const PrompterScreen = memo(function PrompterScreen({
   lines,
   currentIndex,
   fontSize,
@@ -66,27 +77,6 @@ export function PrompterScreen({
     scrollLineIntoView(index)
   }
 
-  // Máscara CSS que deja opaca solo una franja central de 2 líneas de alto
-  // (según el fontSize elegido) y desvanece el resto del contenedor
-  // flotante hacia los bordes, para que las frases entren y salgan de forma
-  // suave conforme avanza el scroll automático o el de voz.
-  const readingWindowMask = useMemo(() => {
-    const halfWindow = (fontSize * LINE_HEIGHT_RATIO * VISIBLE_LINES) / 2
-    const opaqueStart = `calc(50% - ${halfWindow}px)`
-    const opaqueEnd = `calc(50% + ${halfWindow}px)`
-    const transparentStart = `calc(50% - ${halfWindow + FADE_MARGIN_PX}px)`
-    const transparentEnd = `calc(50% + ${halfWindow + FADE_MARGIN_PX}px)`
-    return [
-      'linear-gradient(to bottom,',
-      'transparent 0%,',
-      `transparent ${transparentStart},`,
-      `black ${opaqueStart},`,
-      `black ${opaqueEnd},`,
-      `transparent ${transparentEnd},`,
-      'transparent 100%)',
-    ].join(' ')
-  }, [fontSize])
-
   return (
     // Overlay del teleprónpter: llena por completo (absolute inset-0, w-full,
     // h-full) el recuadro del <video> de cámara (z-0) dentro del stage que
@@ -97,8 +87,8 @@ export function PrompterScreen({
       tabIndex={0}
       className="absolute inset-0 z-10 h-full w-full overflow-y-auto bg-transparent outline-none will-change-transform"
       style={{
-        WebkitMaskImage: readingWindowMask,
-        maskImage: readingWindowMask,
+        WebkitMaskImage: READING_WINDOW_MASK,
+        maskImage: READING_WINDOW_MASK,
         // translateZ(0) aísla este contenedor en su propia capa de
         // composición (aceleración por hardware) para que el scroll continuo
         // no compita por el hilo principal con la captura de MediaRecorder
@@ -144,4 +134,4 @@ export function PrompterScreen({
       </div>
     </div>
   )
-}
+})

@@ -112,6 +112,14 @@ export function useVideoRecorder(): UseVideoRecorderResult {
         await videoPreviewRef.current.play().catch(() => undefined)
       }
 
+      // El MediaRecorder de abajo se construye sobre `stream` (el MediaStream
+      // crudo de getUserMedia), NUNCA sobre `videoPreviewRef.current.srcObject`:
+      // ambos apuntan al mismo stream, pero son dos consumidores independientes.
+      // El <video> es solo la vista previa en pantalla; quitarlo, ocultarlo o
+      // remontarlo no afecta la grabación en curso. No hay canvas de por medio
+      // ni falta ninguno: agregar uno forzaría un dibujado manual por frame en
+      // el hilo principal, que es justo el tipo de trabajo que puede
+      // congelar la vista de cámara en Safari/iOS si compite con el scroll.
       const mimeType = pickSupportedMimeType()
       const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
       chunksRef.current = []

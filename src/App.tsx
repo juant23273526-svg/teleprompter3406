@@ -207,9 +207,30 @@ export default function App() {
       {/* Stage: 60% superior en vertical (portrait) / 60% izquierdo en
           horizontal (landscape). El <video> queda montado siempre (nunca
           condicionado a isRecording), así el MediaStream de getUserMedia
-          nunca se degrada a solo audio por perder su elemento de destino. */}
+          nunca se degrada a solo audio por perder su elemento de destino.
+          MediaRecorder graba directo del MediaStream que devuelve
+          getUserMedia (streamRef en useVideoRecorder.ts) — nunca lee este
+          <video>, que es solo la vista previa en pantalla — así que no hay
+          nada que "capturar por canvas": eso solo agregaría un dibujado por
+          frame en el hilo principal, justo lo que causa el congelamiento
+          que se busca evitar. */}
       <div className="relative h-[60vh] w-full shrink-0 overflow-hidden bg-black landscape:h-full landscape:w-[60%]">
-        <video ref={videoPreviewRef} muted playsInline autoPlay className="absolute inset-0 z-0 h-full w-full object-cover" />
+        <video
+          ref={videoPreviewRef}
+          muted
+          playsInline
+          autoPlay
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover will-change-transform"
+          style={{
+            // Capa de composición propia, aislada de la del overlay con
+            // scroll (ver PrompterScreen.tsx): aunque ambos son "hermanos" en
+            // el DOM (no hace falta un portal para separarlos), promoverlos a
+            // capas GPU distintas evita que el compositor tenga que
+            // repintarlos juntos en cada frame de scroll.
+            transform: 'translateZ(0)',
+            WebkitTransform: 'translateZ(0)',
+          }}
+        />
 
         {!isRecording && (
           <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center text-slate-700">
@@ -217,9 +238,6 @@ export default function App() {
           </div>
         )}
 
-        {/* MediaRecorder captura el MediaStream de getUserMedia directamente,
-            así que el archivo grabado siempre queda limpio (cámara + mic) sin
-            esta capa de teleprónpter, sin importar lo que se vea aquí. */}
         <PrompterScreen
           lines={lines}
           currentIndex={currentIndex}

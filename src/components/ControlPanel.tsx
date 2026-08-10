@@ -1,4 +1,5 @@
 import { AlertTriangle, Circle, Mic, MicOff, Play, RotateCcw, Square, Video } from 'lucide-react'
+import { memo } from 'react'
 import type { ComponentType } from 'react'
 import type { SpeechRecognitionStatus } from '../hooks/useSpeechRecognition'
 import type { ScrollMode } from '../types'
@@ -46,7 +47,14 @@ const MAX_FONT_SIZE = 64
 const MIN_AUTO_SCROLL_SPEED = 1
 const MAX_AUTO_SCROLL_SPEED = 10
 
-export function ControlPanel({
+/**
+ * Memoizado: App.tsx re-renderiza seguido mientras el teleprónpter está
+ * activo en modo voz (currentIndex cambia con cada frase reconocida), pero
+ * ninguno de esos cambios afecta las props de este panel. Sin memo, cada uno
+ * de esos renders recorría también este árbol entero por nada mientras la
+ * cámara graba en paralelo.
+ */
+export const ControlPanel = memo(function ControlPanel({
   script,
   onScriptChange,
   fontSize,
@@ -256,4 +264,4 @@ export function ControlPanel({
       </div>
     </aside>
   )
-}
+})
