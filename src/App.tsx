@@ -1,5 +1,6 @@
 import { Menu, Pause, Play, Square, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { CameraView } from './components/CameraView'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
 import { VideoPreviewModal } from './components/VideoPreviewModal'
@@ -16,20 +17,38 @@ Ajusta el tamaño de fuente según tu comodidad de lectura.
 Presiona "Iniciar Teleprónpter" y comienza a leer con naturalidad.
 El sistema seguirá tu voz y desplazará el texto automáticamente.`
 
-const DEFAULT_AUTO_SCROLL_SPEED = 5
-const MIN_AUTO_SCROLL_SPEED = 1
-const MAX_AUTO_SCROLL_SPEED = 10
-/** Escala fina en píxeles por segundo: nivel 1 = 15px/s, nivel 10 = 120px/s. */
-const MIN_AUTO_SCROLL_PX_PER_SEC = 15
-const MAX_AUTO_SCROLL_PX_PER_SEC = 120
+/** Velocidad media del rango: ritmo de lectura conversacional normal. */
+const DEFAULT_AUTO_SCROLL_SPEED = 2.5
+const MIN_AUTO_SCROLL_SPEED = 0.2
+const MAX_AUTO_SCROLL_SPEED = 5
+/** Escala en píxeles por segundo en los extremos del rango (ver reshapeSensitivityCurve para el tramo medio). */
+const MIN_AUTO_SCROLL_PX_PER_SEC = 8
+const MAX_AUTO_SCROLL_PX_PER_SEC = 140
 /** Tras un gesto de scroll manual del usuario, el auto-scroll se pausa esta cantidad de ms antes de reanudar. */
 const AUTO_SCROLL_RESUME_DELAY_MS = 1200
 
-/** Convierte el nivel de velocidad (1..10) a px/s mediante interpolación lineal continua. */
+/**
+ * Curva de sensibilidad no lineal en 3 tramos sobre t∈[0,1] (posición
+ * normalizada del slider). El 70% central del recorrido del control
+ * (t entre 0.15 y 0.85, que en el slider real cae en la franja de velocidad
+ * "conversacional") se comprime a solo el 30% del rango de salida en
+ * px/s: cada paso de 0.1 del slider ahí mueve la velocidad real muy poco,
+ * permitiendo micro-ajustes finos. En los extremos (muy lento / muy rápido,
+ * donde la precisión importa menos) la curva es más empinada, así se
+ * alcanzan rápido con menos recorrido del slider.
+ */
+function reshapeSensitivityCurve(t: number): number {
+  if (t <= 0.15) return (t / 0.15) * 0.35
+  if (t >= 0.85) return 0.65 + ((t - 0.85) / 0.15) * 0.35
+  return 0.35 + ((t - 0.15) / 0.7) * 0.3
+}
+
+/** Convierte el nivel de velocidad (0.2..5, paso 0.1) a px/s vía la curva de sensibilidad no lineal. */
 function autoScrollSpeedToPixelsPerSecond(speed: number): number {
   const clampedSpeed = Math.min(MAX_AUTO_SCROLL_SPEED, Math.max(MIN_AUTO_SCROLL_SPEED, speed))
   const t = (clampedSpeed - MIN_AUTO_SCROLL_SPEED) / (MAX_AUTO_SCROLL_SPEED - MIN_AUTO_SCROLL_SPEED)
-  return MIN_AUTO_SCROLL_PX_PER_SEC + t * (MAX_AUTO_SCROLL_PX_PER_SEC - MIN_AUTO_SCROLL_PX_PER_SEC)
+  const shapedT = reshapeSensitivityCurve(t)
+  return MIN_AUTO_SCROLL_PX_PER_SEC + shapedT * (MAX_AUTO_SCROLL_PX_PER_SEC - MIN_AUTO_SCROLL_PX_PER_SEC)
 }
 
 export default function App() {
@@ -169,12 +188,21 @@ export default function App() {
   // reanuda desde la nueva posición.
   const autoScrollSpeedRef = useRef(autoScrollSpeed)
   autoScrollSpeedRef.current = autoScrollSpeed
+  // Acumulador decimal de posición: container.scrollTop redondea a entero al
+  // leerlo de vuelta del DOM, así que incrementar con `container.scrollTop +=`
+  // pierde la parte fraccionaria en cada frame y ese error se va acumulando
+  // (tirones perceptibles en velocidades bajas). Sumando el delta sobre este
+  // ref en JS puro y solo escribiendo el resultado a scrollTop, el avance
+  // queda perfectamente fluido sin importar la velocidad configurada.
+  const scrollAccumulatorRef = useRef(0)
 
   useEffect(() => {
     if (scrollMode !== 'auto' || !isActive) return
 
     const container = scrollContainerRef.current
     if (!container) return
+
+    scrollAccumulatorRef.current = container.scrollTop
 
     let animationFrameId: number
     let lastFrameTime: number | null = null
@@ -202,9 +230,15 @@ export default function App() {
       lastFrameTime = now
 
       const isPausedByUser = now - lastUserInteractionAt < AUTO_SCROLL_RESUME_DELAY_MS
-      if (!isPausedByUser) {
+      if (isPausedByUser) {
+        // Mientras el usuario interviene manualmente, mantiene el acumulador
+        // sincronizado con la posición real para que el auto-scroll reanude
+        // exactamente desde ahí, sin saltar a donde se había quedado antes.
+        scrollAccumulatorRef.current = container.scrollTop
+      } else {
         const pixelsPerSecond = autoScrollSpeedToPixelsPerSecond(autoScrollSpeedRef.current)
-        container.scrollTop += pixelsPerSecond * deltaSeconds
+        scrollAccumulatorRef.current += pixelsPerSecond * deltaSeconds
+        container.scrollTop = scrollAccumulatorRef.current
       }
 
       animationFrameId = requestAnimationFrame(step)
@@ -253,30 +287,11 @@ export default function App() {
           que useVideoRecorder.ts redibuja frame a frame sobre un <canvas>
           oculto (nunca montado en el DOM) para alimentar al MediaRecorder
           vía canvas.captureStream() — ver el comentario en ese hook para el
-          porqué de ese desacople. */}
-      <div className="app-grid-camera relative overflow-hidden rounded-2xl bg-black">
-        <video
-          ref={videoPreviewRef}
-          muted
-          playsInline
-          autoPlay
-          className="pointer-events-none absolute inset-0 z-0 h-full w-full object-cover will-change-transform"
-          style={{
-            // Capa de composición propia, aislada de la del contenedor con
-            // scroll del teleprónpter (que ahora ni siquiera es su vecino de
-            // DOM): promoverlo a su propia capa GPU evita que el compositor
-            // tenga que repintarlo junto con el resto de la interfaz.
-            transform: 'translateZ(0)',
-            WebkitTransform: 'translateZ(0)',
-          }}
-        />
-
-        {!isRecording && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-700">
-            <Video className="h-10 w-10" />
-          </div>
-        )}
-      </div>
+          porqué de ese desacople. Vive en su propio componente memoizado
+          (CameraView) para que los re-renders de App disparados por el
+          reconocimiento de voz (currentIndex/lastTranscript cambian con
+          cada frase) no lo toquen mientras graba. */}
+      <CameraView videoPreviewRef={videoPreviewRef} isRecording={isRecording} />
 
       {/* Módulo de acciones: los dos controles principales al alcance del
           pulgar, siempre a la vista sin importar si el drawer de ajustes

@@ -71,6 +71,11 @@ function downloadBlob(blob: Blob, mimeType: string): void {
 
 /** Cuadros por segundo fijos para el lienzo de captura: estable y suficiente para lectura en cámara. */
 const CANVAS_CAPTURE_FPS = 30
+/** Intervalo mínimo entre dibujados reales (~33.3ms): en pantallas ProMotion de iPhone (120Hz)
+ *  requestAnimationFrame dispara hasta 4x más seguido de lo necesario; sin este throttle explícito
+ *  con performance.now(), drawImage se ejecuta en cada uno de esos frames y satura la GPU/CPU hasta
+ *  provocar el thermal throttling que congela la grabación en sesiones largas. */
+const CANVAS_DRAW_INTERVAL_MS = 1000 / CANVAS_CAPTURE_FPS
 /** Resolución de respaldo si el <video> aún no reporta sus dimensiones reales al momento de crear el canvas. */
 const FALLBACK_CANVAS_WIDTH = 1280
 const FALLBACK_CANVAS_HEIGHT = 720
@@ -106,9 +111,14 @@ export function useVideoRecorder(): UseVideoRecorderResult {
   // Motor de renderizado por canvas: nunca se agrega al DOM, solo existe
   // como superficie de dibujo intermedia para alimentar al MediaRecorder.
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  // Contexto 2D obtenido una sola vez en start() y reutilizado en cada frame:
+  // llamar a getContext() dentro del loop de dibujo (aunque devuelva el mismo
+  // objeto) es trabajo redundante en el hilo principal en cada frame.
+  const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null)
   const canvasStreamRef = useRef<MediaStream | null>(null)
   const animationFrameIdRef = useRef<number | null>(null)
   const isStreamingRef = useRef(false)
+  const lastDrawTimeRef = useRef(0)
 
   const stopDrawLoop = useCallback(() => {
     isStreamingRef.current = false
@@ -119,19 +129,34 @@ export function useVideoRecorder(): UseVideoRecorderResult {
   }, [])
 
   // Ciclo continuo de dibujo: se relanza a sí mismo con requestAnimationFrame
-  // en vez de un setInterval de intervalo fijo, para heredar el mismo
-  // throttling/eficiencia que usa el navegador para cualquier otra animación.
+  // (para heredar el pausado automático del navegador en pestañas ocultas),
+  // pero el propio drawImage se throttlea manualmente a CANVAS_CAPTURE_FPS
+  // con performance.now(). Sin este control, en pantallas ProMotion (120Hz)
+  // rAF dispara 4x más seguido de lo que el encoder necesita, generando
+  // trabajo de GPU/CPU redundante que dispara el thermal throttling de iOS
+  // en sesiones largas.
   const startDrawLoop = useCallback(() => {
-    const drawFrame = () => {
+    lastDrawTimeRef.current = 0
+    const drawFrame = (now: number) => {
+      animationFrameIdRef.current = requestAnimationFrame(drawFrame)
+      if (!isStreamingRef.current) return
+
+      const elapsed = now - lastDrawTimeRef.current
+      if (elapsed < CANVAS_DRAW_INTERVAL_MS) return
+      // Resta el remanente (en vez de asignar `now` directo) para que el
+      // intervalo promedie exactamente CANVAS_DRAW_INTERVAL_MS incluso si
+      // este frame llegó tarde, sin ir acumulando drift a lo largo de la toma.
+      lastDrawTimeRef.current = now - (elapsed % CANVAS_DRAW_INTERVAL_MS)
+
       const video = videoPreviewRef.current
       const canvas = canvasRef.current
-      if (video && canvas && isStreamingRef.current) {
-        const ctx = canvas.getContext('2d')
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        }
+      const ctx = canvasCtxRef.current
+      // readyState >= 2 (HAVE_CURRENT_DATA): el <video> ya tiene un fotograma
+      // decodificado disponible para copiar; por debajo de eso drawImage
+      // pintaría un cuadro vacío/obsoleto.
+      if (video && canvas && ctx && video.readyState >= 2) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       }
-      animationFrameIdRef.current = requestAnimationFrame(drawFrame)
     }
     animationFrameIdRef.current = requestAnimationFrame(drawFrame)
   }, [])
@@ -171,10 +196,24 @@ export function useVideoRecorder(): UseVideoRecorderResult {
 
       // El canvas nunca se monta en el DOM (no necesita estar ahí para
       // captureStream/drawImage); se reutiliza entre grabaciones si ya existe.
+      // Las dimensiones se fijan aquí UNA SOLA VEZ (no en cada frame del
+      // loop de dibujo): redimensionar un canvas reinicializa su backing
+      // store en cada asignación, así que hacerlo por frame forzaría al
+      // GC/GPU de iOS a reservar memoria de video nueva 30 veces por segundo.
       const canvas = canvasRef.current ?? document.createElement('canvas')
       canvasRef.current = canvas
       canvas.width = video.videoWidth || FALLBACK_CANVAS_WIDTH
       canvas.height = video.videoHeight || FALLBACK_CANVAS_HEIGHT
+
+      // `alpha: false` le dice a WebKit que el canvas siempre es opaco, así
+      // se salta la composición de transparencias y pinta por hardware en la
+      // GPU de iOS. `willReadFrequently: false` evita que el navegador
+      // fuerce un backend por software (solo leeríamos con getImageData si
+      // hiciéramos post-procesado por pixel, que no es el caso aquí). El
+      // contexto se obtiene una sola vez y se reutiliza en cada frame del
+      // loop de dibujo, en vez de volver a pedirlo con cada drawImage.
+      const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false })
+      canvasCtxRef.current = ctx
 
       isStreamingRef.current = true
       startDrawLoop()

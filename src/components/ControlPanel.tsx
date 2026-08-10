@@ -40,8 +40,10 @@ const SCROLL_MODE_OPTIONS: Array<{ value: ScrollMode; emoji: string; label: stri
 
 const MIN_FONT_SIZE = 20
 const MAX_FONT_SIZE = 64
-const MIN_AUTO_SCROLL_SPEED = 1
-const MAX_AUTO_SCROLL_SPEED = 10
+/** Rango decimal de alta precisión (paso 0.1): permite micro-ajustes finos de velocidad, ver reshapeSensitivityCurve en App.tsx. */
+const MIN_AUTO_SCROLL_SPEED = 0.2
+const MAX_AUTO_SCROLL_SPEED = 5
+const AUTO_SCROLL_SPEED_STEP = 0.1
 
 /**
  * Memoizado: App.tsx re-renderiza seguido mientras el teleprónpter está
@@ -149,14 +151,14 @@ export const ControlPanel = memo(function ControlPanel({
           <div className="mt-1 flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-950 p-3">
             <label htmlFor="auto-scroll-speed-input" className="flex items-center justify-between text-xs font-medium uppercase tracking-wide text-slate-400">
               <span>Velocidad de scroll</span>
-              <span className="text-slate-300">{autoScrollSpeed}/10</span>
+              <span className="text-slate-300">{autoScrollSpeed.toFixed(1)}/{MAX_AUTO_SCROLL_SPEED.toFixed(1)}</span>
             </label>
             <input
               id="auto-scroll-speed-input"
               type="range"
               min={MIN_AUTO_SCROLL_SPEED}
               max={MAX_AUTO_SCROLL_SPEED}
-              step={1}
+              step={AUTO_SCROLL_SPEED_STEP}
               value={autoScrollSpeed}
               onChange={(event) => onAutoScrollSpeedChange(Number(event.target.value))}
               className="w-full accent-cyan-500"
