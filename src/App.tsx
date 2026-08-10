@@ -1,4 +1,4 @@
-import { Menu, Square, Video, X } from 'lucide-react'
+import { Menu, Pause, Play, Square, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
@@ -92,13 +92,21 @@ export default function App() {
   } = useVideoRecorder()
   const isRecording = recorderStatus === 'recording'
 
-  // Al iniciar a grabar, cierra el drawer de ajustes automáticamente para
-  // dejar la pantalla limpia (teleprónpter + cámara a la vista).
+  // Al iniciar a grabar o al arrancar el teleprónpter, cierra el drawer de
+  // ajustes automáticamente para dejar la pantalla 100% limpia (teleprónpter
+  // + cámara a la vista), sin importar si se disparó desde el botón de la
+  // barra de acciones o desde el propio botón dentro del drawer.
   useEffect(() => {
     if (isRecording) {
       setIsMenuOpen(false)
     }
   }, [isRecording])
+
+  useEffect(() => {
+    if (isActive) {
+      setIsMenuOpen(false)
+    }
+  }, [isActive])
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
@@ -213,6 +221,11 @@ export default function App() {
     }
   }, [scrollMode, isActive])
 
+  // En modo manual no hay ningún proceso que iniciar/pausar: el usuario
+  // controla el scroll directamente con la rueda o el teclado (misma regla
+  // que usa ControlPanel para su propio botón de inicio).
+  const canToggleActive = scrollMode === 'voice' || scrollMode === 'auto'
+
   return (
     // .app-grid (index.css): 3 franjas apiladas en vertical (prompter 35vh /
     // camera 55vh / actions 10vh) y 2 columnas en horizontal (prompter+actions
@@ -266,40 +279,70 @@ export default function App() {
         )}
       </div>
 
-      {/* Módulo de acciones: el botón principal de grabación, siempre a la
-          vista sin importar si el drawer de ajustes está abierto o no. */}
+      {/* Módulo de acciones: los dos controles principales al alcance del
+          pulgar, siempre a la vista sin importar si el drawer de ajustes
+          está abierto o no. */}
       <div className="app-grid-actions flex flex-col items-center justify-center gap-1.5 px-4">
         {recorderError && <p className="text-center text-[11px] text-red-400">{recorderError}</p>}
-        <button
-          type="button"
-          onClick={isRecording ? stopRecording : startRecording}
-          className={[
-            'flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold shadow-lg transition',
-            isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400',
-          ].join(' ')}
-        >
-          {isRecording ? (
-            <>
-              <Square className="h-4 w-4" />
-              Detener Grabación
-            </>
-          ) : (
-            <>
-              <Video className="h-4 w-4" />
-              Iniciar Grabación
-            </>
-          )}
-        </button>
+        <div className="flex w-full max-w-md items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={isActive ? handleStop : handleStart}
+            disabled={!isActive && (!script.trim() || !canToggleActive)}
+            title={canToggleActive ? undefined : 'El modo manual no requiere iniciar nada: usa la rueda o el teclado'}
+            className={[
+              'flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition disabled:cursor-not-allowed disabled:opacity-40',
+              isActive ? 'bg-amber-500 text-slate-950 hover:bg-amber-400' : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400',
+            ].join(' ')}
+          >
+            {isActive ? (
+              <>
+                <Pause className="h-4 w-4" />
+                Pausar Teleprónpter
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" />
+                Iniciar Teleprónpter
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={isRecording ? stopRecording : startRecording}
+            className={[
+              'flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition',
+              isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-slate-100 text-slate-950 hover:bg-white',
+            ].join(' ')}
+          >
+            {isRecording ? (
+              <>
+                <Square className="h-4 w-4" />
+                Detener Grabación
+              </>
+            ) : (
+              <>
+                <Video className="h-4 w-4" />
+                Iniciar Grabación
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Menú de hamburguesa flotante: siempre por encima de todo (z-50). El
-          drawer de ajustes (z-40) que despliega es un overlay, nunca ocupa
-          espacio fijo en el grid de arriba. */}
+      {/* Menú de hamburguesa flotante: siempre por encima de todo (z-50).
+          top usa env(safe-area-inset-top) para bajar el botón por debajo del
+          notch/Dynamic Island y la barra de estado en iPhone; sin esto, en
+          algunos modelos el botón quedaba parcialmente tapado o pegado al
+          borde superior, fuera del área táctil segura. El drawer de ajustes
+          (z-40) que despliega es un overlay, nunca ocupa espacio fijo en el
+          grid de arriba. */}
       <button
         type="button"
         onClick={() => setIsMenuOpen((open) => !open)}
         aria-label={isMenuOpen ? 'Cerrar menú de ajustes' : 'Abrir menú de ajustes'}
-        className="fixed right-4 top-4 z-50 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900/90 text-slate-100 shadow-lg backdrop-blur transition hover:bg-slate-800"
+        className="fixed right-4 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-50 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900/90 text-slate-100 shadow-lg backdrop-blur transition hover:bg-slate-800"
       >
         {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
       </button>
