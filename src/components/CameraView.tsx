@@ -4,20 +4,21 @@ import type { RefObject } from 'react'
 
 interface CameraViewProps {
   videoPreviewRef: RefObject<HTMLVideoElement>
+  canvasRef: RefObject<HTMLCanvasElement>
   isRecording: boolean
 }
 
 /**
  * Memoizado: en modo voz, App.tsx actualiza currentIndex/lastTranscript con
- * cada frase reconocida, lo cual no debe repintar este módulo (el <video> no
- * depende de ninguno de esos valores). Sin memo, cada uno de esos renders de
- * App recorría también este árbol de cámara por nada, compitiendo por el
- * hilo principal con el drawImage por frame de useVideoRecorder.ts mientras
- * graba en paralelo. `videoPreviewRef` es un ref (identidad estable) e
- * `isRecording` solo cambia al iniciar/detener grabación, así que memo
- * bloquea el resto de los renders de App.
+ * cada frase reconocida, lo cual no debe repintar este módulo (ni el <video>
+ * ni el <canvas> dependen de ninguno de esos valores). Sin memo, cada uno de
+ * esos renders de App recorría también este árbol de cámara por nada,
+ * compitiendo por el hilo principal con el drawImage por frame de
+ * useVideoRecorder.ts mientras graba en paralelo. `videoPreviewRef` y
+ * `canvasRef` son refs (identidad estable) e `isRecording` solo cambia al
+ * iniciar/detener grabación, así que memo bloquea el resto de los renders de App.
  */
-export const CameraView = memo(function CameraView({ videoPreviewRef, isRecording }: CameraViewProps) {
+export const CameraView = memo(function CameraView({ videoPreviewRef, canvasRef, isRecording }: CameraViewProps) {
   return (
     <div className="app-grid-camera relative overflow-hidden rounded-2xl bg-black">
       <video
@@ -41,6 +42,21 @@ export const CameraView = memo(function CameraView({ videoPreviewRef, isRecordin
           <Video className="h-10 w-10" />
         </div>
       )}
+
+      {/* Canvas de captura para MediaRecorder (ver useVideoRecorder.ts):
+          DEBE ser un nodo real y montado del DOM, nunca uno creado con
+          document.createElement y mantenido solo en memoria — WebKit en iOS
+          suspende/descarta silenciosamente el MediaStream de captureStream()
+          de un canvas "huérfano" del árbol de render en tomas largas, lo que
+          congela el video (dejando solo audio) a los pocos segundos. Se
+          mantiene fuera de la vista con posición fija fuera de pantalla, NO
+          con display:none/visibility:hidden: ambas sí detienen el pintado
+          en WebKit, lo cual reintroduciría el mismo problema. */}
+      <canvas
+        ref={canvasRef}
+        aria-hidden="true"
+        className="pointer-events-none fixed -top-[9999px] left-0 opacity-0"
+      />
     </div>
   )
 })

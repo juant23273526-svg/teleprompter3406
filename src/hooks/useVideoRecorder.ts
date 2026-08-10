@@ -8,6 +8,14 @@ interface UseVideoRecorderResult {
   errorMessage: string | null
   /** Ref para el <video> de vista previa: úsalo para encuadrar la cámara mientras grabas. */
   videoPreviewRef: RefObject<HTMLVideoElement>
+  /**
+   * Ref para el <canvas> de captura: DEBE montarse en el JSX (CameraView.tsx),
+   * nunca crearse con `document.createElement` en memoria — WebKit/iOS
+   * suspende o descarta silenciosamente el MediaStream de `captureStream()`
+   * de un canvas que no forma parte del árbol de render del documento, lo
+   * cual corta la grabación de video (dejando solo audio) en tomas largas.
+   */
+  canvasRef: RefObject<HTMLCanvasElement>
   /** Blob de la última toma grabada, pendiente de revisión en el modal de vista previa. */
   previewBlob: Blob | null
   /** MIME type real con el que se grabó el blob (determina la extensión al guardar). */
@@ -81,21 +89,46 @@ const FALLBACK_CANVAS_WIDTH = 1280
 const FALLBACK_CANVAS_HEIGHT = 720
 
 /**
+ * Espera a que el <video> reporte metadata real (HAVE_METADATA, readyState
+ * >= 1) antes de leer videoWidth/videoHeight: leerlas antes de este punto
+ * devuelve 0 y forzaría el fallback, grabando en una resolución que no
+ * coincide con la real de la cámara. El timeout es una salvaguarda para no
+ * bloquear la grabación indefinidamente si el evento nunca llega (stream ya
+ * "caliente" en algún caso raro de iOS).
+ */
+function waitForVideoMetadata(video: HTMLVideoElement, timeoutMs = 1500): Promise<void> {
+  if (video.readyState >= 1) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = () => {
+      video.removeEventListener('loadedmetadata', finish)
+      clearTimeout(timer)
+      resolve()
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    video.addEventListener('loadedmetadata', finish, { once: true })
+  })
+}
+
+/**
  * Grabación de video independiente del teleprónpter: captura cámara + mic
  * con getUserMedia, pero el video que efectivamente graba MediaRecorder no
- * sale directo de ese MediaStream, sino de un <canvas> oculto (nunca se monta
- * en el DOM) sobre el que se redibuja cada fotograma del <video> de vista
+ * sale directo de ese MediaStream, sino de un <canvas> montado en el DOM
+ * (ver CameraView.tsx, fuera de la vista pero como nodo real del árbol de
+ * render) sobre el que se redibuja cada fotograma del <video> de vista
  * previa vía requestAnimationFrame + drawImage, y de ahí se extrae con
  * `canvas.captureStream()`. Ese desacople entre "lo que la cámara entrega" y
  * "lo que el encoder consume" es justamente lo que se busca: en algunas
  * versiones de Safari/iOS, MediaRecorder sobre el track de cámara crudo se
  * ha visto detenerse en grabaciones largas; pasar por canvas es un workaround
  * conocido para ese caso a cambio de un dibujado por frame en el hilo
- * principal. El texto del teleprónpter nunca se dibuja en este canvas
- * (vive en un módulo de DOM aparte, ver App.tsx), así que la toma grabada
- * sigue siendo cámara + mic limpios. Al detener, el blob queda en
- * `previewBlob` para que la UI muestre un modal de revisión antes de
- * guardar nada en disco.
+ * principal. Crítico: el canvas tiene que ser un nodo real del DOM, no uno
+ * creado con `document.createElement` y mantenido solo en memoria — WebKit
+ * en iOS suspende/descarta el MediaStream de ese tipo de canvas "huérfano"
+ * en sesiones largas (la causa raíz del congelamiento a los ~15s). El texto
+ * del teleprónpter nunca se dibuja en este canvas (vive en un módulo de DOM
+ * aparte, ver App.tsx), así que la toma grabada sigue siendo cámara + mic
+ * limpios. Al detener, el blob queda en `previewBlob` para que la UI muestre
+ * un modal de revisión antes de guardar nada en disco.
  */
 export function useVideoRecorder(): UseVideoRecorderResult {
   const [status, setStatus] = useState<VideoRecorderStatus>('idle')
@@ -108,17 +141,23 @@ export function useVideoRecorder(): UseVideoRecorderResult {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
-  // Motor de renderizado por canvas: nunca se agrega al DOM, solo existe
-  // como superficie de dibujo intermedia para alimentar al MediaRecorder.
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  // Contexto 2D obtenido una sola vez en start() y reutilizado en cada frame:
-  // llamar a getContext() dentro del loop de dibujo (aunque devuelva el mismo
-  // objeto) es trabajo redundante en el hilo principal en cada frame.
+  // Motor de renderizado por canvas: el nodo <canvas> lo monta CameraView.tsx
+  // en el JSX (nunca se crea aquí con document.createElement), este ref solo
+  // lo referencia como superficie de dibujo intermedia para MediaRecorder.
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  // Contexto 2D: se obtiene una única vez en todo el ciclo de vida del
+  // componente (la primera vez que start() lo necesita) y se reutiliza en
+  // cada frame y en cada grabación subsecuente; llamar a getContext() otra
+  // vez sobre el mismo canvas devolvería el mismo objeto, así que pedirlo de
+  // nuevo es trabajo redundante en el hilo principal.
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null)
   const canvasStreamRef = useRef<MediaStream | null>(null)
   const animationFrameIdRef = useRef<number | null>(null)
   const isStreamingRef = useRef(false)
   const lastDrawTimeRef = useRef(0)
+  // Resuelve la promesa de "primer frame dibujado" (ver waitForFirstFrame):
+  // se consume y limpia en cuanto drawFrame pinta el primer fotograma real.
+  const firstFrameResolverRef = useRef<(() => void) | null>(null)
 
   const stopDrawLoop = useCallback(() => {
     isStreamingRef.current = false
@@ -156,9 +195,34 @@ export function useVideoRecorder(): UseVideoRecorderResult {
       // pintaría un cuadro vacío/obsoleto.
       if (video && canvas && ctx && video.readyState >= 2) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+        if (firstFrameResolverRef.current) {
+          firstFrameResolverRef.current()
+          firstFrameResolverRef.current = null
+        }
       }
     }
     animationFrameIdRef.current = requestAnimationFrame(drawFrame)
+  }, [])
+
+  /**
+   * Se resuelve en cuanto el loop de dibujo pinta un primer fotograma real
+   * sobre el canvas (o tras `timeoutMs` como salvaguarda). `start()` espera
+   * esta promesa antes de llamar a `canvas.captureStream()`/`recorder.start()`:
+   * si el MediaRecorder arranca sobre un canvas todavía en blanco, algunas
+   * versiones de Safari/iOS reciben una pista de video "vacía" y abortan la
+   * grabación a los 1-2 segundos en vez de solo entregar un primer cuadro negro.
+   */
+  const waitForFirstFrame = useCallback((timeoutMs = 1000): Promise<void> => {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        resolve()
+      }
+      firstFrameResolverRef.current = finish
+      setTimeout(finish, timeoutMs)
+    })
   }, [])
 
   const releaseStream = useCallback(() => {
@@ -186,37 +250,55 @@ export function useVideoRecorder(): UseVideoRecorderResult {
       const video = videoPreviewRef.current
       if (!video) throw new Error('No se encontró el elemento de video de vista previa.')
 
+      const canvas = canvasRef.current
+      // Si esto dispara, CameraView.tsx no montó el <canvas> antes de que se
+      // pudiera grabar: a diferencia del <video>, este nodo NO debe crearse
+      // dinámicamente con document.createElement como fallback, porque un
+      // canvas fuera del árbol del DOM es exactamente lo que hace que WebKit
+      // en iOS descarte su MediaStream en tomas largas.
+      if (!canvas) throw new Error('No se encontró el canvas de captura de video.')
+
       // 'webkit-playsinline' es el atributo legacy que Safari iOS (<14)
       // necesita además del estándar `playsinline`/`playsInline`: sin él,
       // iOS puede forzar la reproducción a pantalla completa o bloquear la
       // captura de video, entregando solo el track de audio.
       video.setAttribute('webkit-playsinline', 'true')
       video.srcObject = stream
+
+      // Espera metadata real antes de tocar el canvas: hacerlo antes de
+      // play() evita una carrera donde el primer frame ya se dibujó (con las
+      // dimensiones de fallback) antes de fijar el tamaño definitivo.
+      await waitForVideoMetadata(video)
       await video.play().catch(() => undefined)
 
-      // El canvas nunca se monta en el DOM (no necesita estar ahí para
-      // captureStream/drawImage); se reutiliza entre grabaciones si ya existe.
-      // Las dimensiones se fijan aquí UNA SOLA VEZ (no en cada frame del
-      // loop de dibujo): redimensionar un canvas reinicializa su backing
-      // store en cada asignación, así que hacerlo por frame forzaría al
-      // GC/GPU de iOS a reservar memoria de video nueva 30 veces por segundo.
-      const canvas = canvasRef.current ?? document.createElement('canvas')
-      canvasRef.current = canvas
+      // Dimensiones fijadas aquí UNA SOLA VEZ (no en cada frame del loop de
+      // dibujo) y derivadas de la resolución real reportada por el <video>
+      // tras 'loadedmetadata': redimensionar un canvas reinicializa su
+      // backing store en cada asignación, así que hacerlo por frame forzaría
+      // al GC/GPU de iOS a reservar memoria de video nueva 30 veces/segundo.
       canvas.width = video.videoWidth || FALLBACK_CANVAS_WIDTH
       canvas.height = video.videoHeight || FALLBACK_CANVAS_HEIGHT
 
-      // `alpha: false` le dice a WebKit que el canvas siempre es opaco, así
-      // se salta la composición de transparencias y pinta por hardware en la
-      // GPU de iOS. `willReadFrequently: false` evita que el navegador
-      // fuerce un backend por software (solo leeríamos con getImageData si
-      // hiciéramos post-procesado por pixel, que no es el caso aquí). El
-      // contexto se obtiene una sola vez y se reutiliza en cada frame del
-      // loop de dibujo, en vez de volver a pedirlo con cada drawImage.
-      const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false })
-      canvasCtxRef.current = ctx
+      // El contexto 2D se obtiene una sola vez en todo el ciclo de vida del
+      // hook (el canvas es el mismo nodo del DOM entre start()/stop()
+      // sucesivos) y se reutiliza en cada frame del loop de dibujo, en vez
+      // de volver a pedirlo con cada drawImage. `alpha: false` le dice a
+      // WebKit que el canvas siempre es opaco, así se salta la composición
+      // de transparencias y pinta por hardware en la GPU de iOS.
+      // `willReadFrequently: false` evita que el navegador fuerce un backend
+      // por software (aquí nunca se lee el canvas con getImageData).
+      if (!canvasCtxRef.current) {
+        canvasCtxRef.current = canvas.getContext('2d', { alpha: false, willReadFrequently: false })
+      }
 
       isStreamingRef.current = true
+      // Arranca el loop de dibujo y espera a que pinte al menos un fotograma
+      // real ANTES de pedir captureStream()/arrancar el MediaRecorder: así
+      // el encoder nunca ve una pista de video en blanco en su primer chunk,
+      // que es lo que provoca el aborto a 1-2s visto en algunos intentos.
+      const firstFramePromise = waitForFirstFrame()
       startDrawLoop()
+      await firstFramePromise
 
       const canvasStream = canvas.captureStream(CANVAS_CAPTURE_FPS)
       canvasStreamRef.current = canvasStream
@@ -243,6 +325,14 @@ export function useVideoRecorder(): UseVideoRecorderResult {
           setPreviewBlob(blob)
           setPreviewMimeType(finalMimeType)
         }
+        // Desengancha los handlers y suelta la referencia al recorder ya
+        // detenido: sus closures retenían `chunksRef`/`mimeType`/`stream`,
+        // y en iOS dejar ese objeto colgado hasta el próximo start() es
+        // justamente el tipo de referencia viva que retrasa al Garbage
+        // Collector en un dispositivo con memoria ya bajo presión.
+        recorder.ondataavailable = null
+        recorder.onstop = null
+        recorderRef.current = null
         releaseStream()
         setStatus('idle')
       }
@@ -259,7 +349,7 @@ export function useVideoRecorder(): UseVideoRecorderResult {
       setStatus('error')
       releaseStream()
     }
-  }, [releaseStream, startDrawLoop])
+  }, [releaseStream, startDrawLoop, waitForFirstFrame])
 
   const stop = useCallback(() => {
     const recorder = recorderRef.current
@@ -341,6 +431,7 @@ export function useVideoRecorder(): UseVideoRecorderResult {
     status,
     errorMessage,
     videoPreviewRef,
+    canvasRef,
     previewBlob,
     previewMimeType,
     canShareFiles,

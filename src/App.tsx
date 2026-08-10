@@ -100,6 +100,7 @@ export default function App() {
     status: recorderStatus,
     errorMessage: recorderError,
     videoPreviewRef,
+    canvasRef: captureCanvasRef,
     previewBlob,
     previewMimeType,
     canShareFiles,
@@ -291,7 +292,7 @@ export default function App() {
           (CameraView) para que los re-renders de App disparados por el
           reconocimiento de voz (currentIndex/lastTranscript cambian con
           cada frase) no lo toquen mientras graba. */}
-      <CameraView videoPreviewRef={videoPreviewRef} isRecording={isRecording} />
+      <CameraView videoPreviewRef={videoPreviewRef} canvasRef={captureCanvasRef} isRecording={isRecording} />
 
       {/* Módulo de acciones: los dos controles principales al alcance del
           pulgar, siempre a la vista sin importar si el drawer de ajustes
