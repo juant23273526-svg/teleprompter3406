@@ -236,8 +236,8 @@ export default function App() {
             disabled={!isActive && !script.trim()}
             aria-label={isActive ? 'Pausar teleprónpter' : 'Iniciar teleprónpter'}
             className={[
-              'flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold shadow-lg transition disabled:cursor-not-allowed disabled:opacity-40',
-              isActive ? 'bg-amber-500 text-slate-950 hover:bg-amber-400' : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400',
+              'flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold text-white shadow-lg transition disabled:cursor-not-allowed disabled:opacity-40',
+              isActive ? 'bg-blue-800 hover:bg-blue-900' : 'bg-blue-600 hover:bg-blue-700',
             ].join(' ')}
           >
             {isActive ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
@@ -249,8 +249,8 @@ export default function App() {
             onClick={isRecording ? stopRecording : startRecording}
             aria-label={isRecording ? 'Detener grabación' : 'Iniciar grabación'}
             className={[
-              'flex h-16 w-16 shrink-0 items-center justify-center rounded-full shadow-xl transition',
-              isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-slate-100 text-slate-950 hover:bg-white',
+              'flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-white shadow-xl transition',
+              isRecording ? 'bg-red-800 hover:bg-red-900' : 'bg-red-600 hover:bg-red-700',
             ].join(' ')}
           >
             {isRecording ? <Square className="h-6 w-6" /> : <Video className="h-6 w-6" />}
