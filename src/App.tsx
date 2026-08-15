@@ -221,6 +221,7 @@ export default function App() {
         canvasRef={captureCanvasRef}
         isRecording={isRecording}
         filters={videoFilters}
+        onFiltersChange={setVideoFilters}
       />
 
       {/* Módulo de acciones: los 3 controles principales al alcance del

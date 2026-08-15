@@ -87,50 +87,8 @@ const CANVAS_CAPTURE_FPS = 30
  *  provocar el thermal throttling que congela la grabación en sesiones largas. */
 const CANVAS_DRAW_INTERVAL_MS = 1000 / CANVAS_CAPTURE_FPS
 /** Resolución de respaldo si el <video> aún no reporta sus dimensiones reales al momento de crear el canvas. */
-const FALLBACK_CANVAS_WIDTH = 1080
-const FALLBACK_CANVAS_HEIGHT = 1920
-
-/** Proporción vertical objetivo para TikTok/Reels/Shorts (ancho:alto = 9:16). */
-const TARGET_ASPECT_RATIO = 9 / 16
-/** Resolución vertical máxima objetivo (Full HD vertical). El canvas nunca la excede,
- *  pero tampoco fuerza un upscale más allá de lo que la cámara real entrega. */
-const TARGET_CANVAS_MAX_HEIGHT = 1920
-
-interface CoverSourceRect {
-  sx: number
-  sy: number
-  sWidth: number
-  sHeight: number
-}
-
-/**
- * Dimensiones del canvas de grabación: siempre exactamente 9:16, derivadas
- * del lado más largo que reporte la cámara (capado a 1920) para no forzar
- * upscale en cámaras de menor resolución ni exceder el objetivo 1080x1920.
- */
-function computePortraitCanvasSize(videoWidth: number, videoHeight: number): { width: number; height: number } {
-  const height = Math.round(Math.min(Math.max(videoWidth, videoHeight), TARGET_CANVAS_MAX_HEIGHT))
-  const width = Math.round(height * TARGET_ASPECT_RATIO)
-  return { width, height }
-}
-
-/**
- * Calcula el rectángulo fuente (dentro del frame real de la cámara) que hay
- * que recortar para llenar el canvas 9:16 sin deformar la imagen — el
- * equivalente a `object-fit: cover` pero aplicado manualmente en drawImage,
- * ya que el <canvas> no tiene esa propiedad CSS nativa.
- */
-function computeCoverSourceRect(videoWidth: number, videoHeight: number, targetAspectRatio: number): CoverSourceRect {
-  const videoAspectRatio = videoWidth / videoHeight
-  if (videoAspectRatio > targetAspectRatio) {
-    // El frame de la cámara es más ancho que el objetivo: recorta los lados.
-    const sWidth = videoHeight * targetAspectRatio
-    return { sx: (videoWidth - sWidth) / 2, sy: 0, sWidth, sHeight: videoHeight }
-  }
-  // El frame de la cámara es más angosto/alto que el objetivo: recorta arriba/abajo.
-  const sHeight = videoWidth / targetAspectRatio
-  return { sx: 0, sy: (videoHeight - sHeight) / 2, sWidth: videoWidth, sHeight }
-}
+const FALLBACK_CANVAS_WIDTH = 1280
+const FALLBACK_CANVAS_HEIGHT = 720
 
 /**
  * Espera a que el <video> reporte metadata real (HAVE_METADATA, readyState
@@ -205,9 +163,6 @@ export function useVideoRecorder(filters: VideoFilters): UseVideoRecorderResult 
   const animationFrameIdRef = useRef<number | null>(null)
   const isStreamingRef = useRef(false)
   const lastDrawTimeRef = useRef(0)
-  // Rectángulo de recorte "cover" (9:16) calculado una sola vez al conocer las
-  // dimensiones reales de la cámara en start(); null hasta entonces.
-  const coverRectRef = useRef<CoverSourceRect | null>(null)
   // Resuelve la promesa de "primer frame dibujado" (ver waitForFirstFrame):
   // se consume y limpia en cuanto drawFrame pinta el primer fotograma real.
   const firstFrameResolverRef = useRef<(() => void) | null>(null)
@@ -251,14 +206,12 @@ export function useVideoRecorder(filters: VideoFilters): UseVideoRecorderResult 
         // tiempo real sobre cada fotograma grabado; se resetea a 'none'
         // justo después para no afectar ningún otro dibujado futuro sobre
         // este mismo contexto (aunque hoy solo se usa para este drawImage).
+        // El canvas mide exactamente lo mismo que video.videoWidth/Height
+        // (fijado en start()), así que este drawImage 1:1 nunca recorta ni
+        // escala la imagen: el campo de visión grabado es el nativo de la
+        // lente, sin zoom añadido.
         ctx.filter = buildFilterString(filtersRef.current)
-        const rect = coverRectRef.current
-        if (rect) {
-          // Recorte "cover" 9:16: nunca estira ni deforma la imagen lateralmente.
-          ctx.drawImage(video, rect.sx, rect.sy, rect.sWidth, rect.sHeight, 0, 0, canvas.width, canvas.height)
-        } else {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-        }
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
         ctx.filter = 'none'
         if (firstFrameResolverRef.current) {
           firstFrameResolverRef.current()
@@ -309,16 +262,11 @@ export function useVideoRecorder(filters: VideoFilters): UseVideoRecorderResult 
     setErrorMessage(null)
 
     try {
-      // Constraints con resolución vertical "ideal" (no "exact"): pide al
-      // navegador priorizar 1080x1920 (Full HD vertical, estándar
-      // TikTok/Reels/Shorts) sin fallar si la cámara no puede entregarla
-      // exactamente; computeCoverSourceRect/computePortraitCanvasSize abajo
-      // se encargan de forzar 9:16 sin deformar cualquiera que sea la
-      // resolución real que termine entregando el hardware.
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: FALLBACK_CANVAS_WIDTH }, height: { ideal: FALLBACK_CANVAS_HEIGHT } },
-        audio: true,
-      })
+      // Sin constraints de resolución/aspect ratio: se deja que la cámara
+      // entregue su stream nativo tal cual (campo de visión 1x real), sin
+      // pedirle al navegador negociar un modo de sensor recortado para
+      // cumplir una resolución "ideal" específica.
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
       streamRef.current = stream
 
       const video = videoPreviewRef.current
@@ -346,19 +294,13 @@ export function useVideoRecorder(filters: VideoFilters): UseVideoRecorderResult 
       await video.play().catch(() => undefined)
 
       // Dimensiones fijadas aquí UNA SOLA VEZ (no en cada frame del loop de
-      // dibujo) y derivadas de la resolución real reportada por el <video>
-      // tras 'loadedmetadata': redimensionar un canvas reinicializa su
-      // backing store en cada asignación, así que hacerlo por frame forzaría
-      // al GC/GPU de iOS a reservar memoria de video nueva 30 veces/segundo.
-      // Se fuerza 9:16 (computePortraitCanvasSize) y se precalcula el
-      // recorte "cover" correspondiente (computeCoverSourceRect) para que el
-      // bucle de dibujo nunca tenga que decidir nada por frame.
-      const videoWidth = video.videoWidth || FALLBACK_CANVAS_WIDTH
-      const videoHeight = video.videoHeight || FALLBACK_CANVAS_HEIGHT
-      const canvasSize = computePortraitCanvasSize(videoWidth, videoHeight)
-      canvas.width = canvasSize.width
-      canvas.height = canvasSize.height
-      coverRectRef.current = computeCoverSourceRect(videoWidth, videoHeight, TARGET_ASPECT_RATIO)
+      // dibujo) e iguales 1:1 a la resolución real reportada por el <video>
+      // tras 'loadedmetadata' (sin recortar ni forzar ningún aspect ratio):
+      // redimensionar un canvas reinicializa su backing store en cada
+      // asignación, así que hacerlo por frame forzaría al GC/GPU de iOS a
+      // reservar memoria de video nueva 30 veces/segundo.
+      canvas.width = video.videoWidth || FALLBACK_CANVAS_WIDTH
+      canvas.height = video.videoHeight || FALLBACK_CANVAS_HEIGHT
 
       // El contexto 2D se obtiene una sola vez en todo el ciclo de vida del
       // hook (el canvas es el mismo nodo del DOM entre start()/stop()

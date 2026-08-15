@@ -1,6 +1,7 @@
 import { Eraser } from 'lucide-react'
 import { memo } from 'react'
 import type { VideoFilters } from '../types'
+import { FILTER_SLIDER_CONFIGS } from '../utils/videoFilters'
 
 interface ControlPanelProps {
   script: string
@@ -22,23 +23,6 @@ const MAX_FONT_SIZE = 64
 const MIN_AUTO_SCROLL_SPEED = 0.05
 const MAX_AUTO_SCROLL_SPEED = 5
 const AUTO_SCROLL_SPEED_STEP = 0.05
-
-interface FilterSliderConfig {
-  key: keyof VideoFilters
-  label: string
-  hint: string
-  min: number
-  max: number
-  step: number
-  unit: string
-}
-
-const FILTER_SLIDERS: FilterSliderConfig[] = [
-  { key: 'brightness', label: 'Brillo', hint: '', min: 80, max: 150, step: 1, unit: '%' },
-  { key: 'contrast', label: 'Contraste / Nitidez', hint: 'También ajusta la nitidez percibida de la imagen.', min: 80, max: 150, step: 1, unit: '%' },
-  { key: 'saturate', label: 'Saturación', hint: '', min: 80, max: 140, step: 1, unit: '%' },
-  { key: 'skinSmooth', label: 'Suavizado de piel', hint: 'Beauty effect: desenfoque sutil.', min: 0, max: 2, step: 0.1, unit: 'px' },
-]
 
 /**
  * Memoizado: App.tsx re-renderiza seguido mientras el teleprónpter está
@@ -68,26 +52,33 @@ export const ControlPanel = memo(function ControlPanel({
     // (fixed) y lo muestra/oculta con el botón de engrane; este panel solo
     // necesita llenar ese contenedor con su propio scroll.
     <aside className="flex h-full w-full flex-col gap-5 overflow-y-auto bg-slate-900 p-5">
-      <div>
-        <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
-        <p className="text-sm text-slate-400">Scroll automático · filtros de video en tiempo real</p>
+      {/* El botón de cerrar (X/engrane) vive en App.tsx, fixed en la esquina
+          superior DERECHA por encima de todo (z-50). El de 'Limpiar' se
+          ancla aquí, a la IZQUIERDA, en su propia capa dentro del flujo
+          normal del panel (z-40 heredado del contenedor del drawer): así
+          nunca comparten posición ni pueden traslaparse, sin importar el
+          tamaño de pantalla o el safe-area-inset del dispositivo. */}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onClearScript}
+          disabled={!script.trim()}
+          aria-label="Limpiar guion"
+          title="Limpiar guion"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-950 text-slate-300 transition hover:border-red-500/50 hover:bg-slate-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <Eraser className="h-4 w-4" />
+        </button>
+        <div>
+          <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
+          <p className="text-sm text-slate-400">Scroll automático · filtros de video en tiempo real</p>
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <label htmlFor="script-input" className="text-xs font-medium uppercase tracking-wide text-slate-400">
-            Guion
-          </label>
-          <button
-            type="button"
-            onClick={onClearScript}
-            disabled={!script.trim()}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Eraser className="h-3.5 w-3.5" />
-            Limpiar
-          </button>
-        </div>
+        <label htmlFor="script-input" className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          Guion
+        </label>
         <textarea
           id="script-input"
           value={script}
@@ -135,7 +126,7 @@ export const ControlPanel = memo(function ControlPanel({
 
       <div className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
         <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Filtros de video en tiempo real</span>
-        {FILTER_SLIDERS.map((filter) => (
+        {FILTER_SLIDER_CONFIGS.map((filter) => (
           <div key={filter.key} className="flex flex-col gap-1">
             <label
               htmlFor={`filter-${filter.key}`}
