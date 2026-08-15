@@ -1,53 +1,48 @@
-import { AlertTriangle, Circle, Mic, MicOff, Play, RotateCcw, Square } from 'lucide-react'
+import { Eraser } from 'lucide-react'
 import { memo } from 'react'
-import type { ComponentType } from 'react'
-import type { SpeechRecognitionStatus } from '../hooks/useSpeechRecognition'
-import type { ScrollMode } from '../types'
+import type { VideoFilters } from '../types'
 
 interface ControlPanelProps {
   script: string
   onScriptChange: (value: string) => void
+  onClearScript: () => void
   fontSize: number
   onFontSizeChange: (value: number) => void
-  speechStatus: SpeechRecognitionStatus
-  speechError: string | null
-  lastTranscript: string
   isActive: boolean
-  onStart: () => void
-  onStop: () => void
-  onReset: () => void
-  scrollMode: ScrollMode
-  onScrollModeChange: (mode: ScrollMode) => void
   autoScrollSpeed: number
   onAutoScrollSpeedChange: (speed: number) => void
+  videoFilters: VideoFilters
+  onVideoFiltersChange: (filters: VideoFilters) => void
 }
-
-const SPEECH_STATUS_CONFIG: Record<
-  SpeechRecognitionStatus,
-  { label: string; className: string; Icon: ComponentType<{ className?: string }> }
-> = {
-  idle: { label: 'En espera', className: 'text-slate-400', Icon: Circle },
-  listening: { label: 'Escuchando', className: 'text-emerald-400', Icon: Mic },
-  error: { label: 'Error', className: 'text-red-400', Icon: AlertTriangle },
-  unsupported: { label: 'No compatible con este navegador', className: 'text-amber-400', Icon: AlertTriangle },
-}
-
-const SCROLL_MODE_OPTIONS: Array<{ value: ScrollMode; emoji: string; label: string; description: string }> = [
-  { value: 'voice', emoji: '🎙️', label: 'Voz', description: 'IA Activada' },
-  { value: 'auto', emoji: '⏱️', label: 'Automático', description: 'Velocidad Constante' },
-  { value: 'manual', emoji: '🖱️', label: 'Manual', description: 'Rueda/Teclas' },
-]
 
 const MIN_FONT_SIZE = 20
 const MAX_FONT_SIZE = 64
-/** Rango decimal de alta precisión (paso 0.1): permite micro-ajustes finos de velocidad, ver reshapeSensitivityCurve en App.tsx. */
-const MIN_AUTO_SCROLL_SPEED = 0.2
+
+/** Rango decimal de alta precisión (paso 0.05): micro-ajustes ultrasuaves de velocidad, ver reshapeSensitivityCurve en App.tsx. */
+const MIN_AUTO_SCROLL_SPEED = 0.05
 const MAX_AUTO_SCROLL_SPEED = 5
-const AUTO_SCROLL_SPEED_STEP = 0.1
+const AUTO_SCROLL_SPEED_STEP = 0.05
+
+interface FilterSliderConfig {
+  key: keyof VideoFilters
+  label: string
+  hint: string
+  min: number
+  max: number
+  step: number
+  unit: string
+}
+
+const FILTER_SLIDERS: FilterSliderConfig[] = [
+  { key: 'brightness', label: 'Brillo', hint: '', min: 80, max: 150, step: 1, unit: '%' },
+  { key: 'contrast', label: 'Contraste / Nitidez', hint: 'También ajusta la nitidez percibida de la imagen.', min: 80, max: 150, step: 1, unit: '%' },
+  { key: 'saturate', label: 'Saturación', hint: '', min: 80, max: 140, step: 1, unit: '%' },
+  { key: 'skinSmooth', label: 'Suavizado de piel', hint: 'Beauty effect: desenfoque sutil.', min: 0, max: 2, step: 0.1, unit: 'px' },
+]
 
 /**
  * Memoizado: App.tsx re-renderiza seguido mientras el teleprónpter está
- * activo en modo voz (currentIndex cambia con cada frase reconocida), pero
+ * activo (el motor de auto-scroll no toca ninguna prop de este panel), pero
  * ninguno de esos cambios afecta las props de este panel. Sin memo, cada uno
  * de esos renders recorría también este árbol entero por nada mientras la
  * cámara graba en paralelo.
@@ -55,41 +50,44 @@ const AUTO_SCROLL_SPEED_STEP = 0.1
 export const ControlPanel = memo(function ControlPanel({
   script,
   onScriptChange,
+  onClearScript,
   fontSize,
   onFontSizeChange,
-  speechStatus,
-  speechError,
-  lastTranscript,
   isActive,
-  onStart,
-  onStop,
-  onReset,
-  scrollMode,
-  onScrollModeChange,
   autoScrollSpeed,
   onAutoScrollSpeedChange,
+  videoFilters,
+  onVideoFiltersChange,
 }: ControlPanelProps) {
-  const status = SPEECH_STATUS_CONFIG[speechStatus]
-  const StatusIcon = status.Icon
-  const isVoiceMode = scrollMode === 'voice'
-  // En modo manual no hay ningún proceso que iniciar/detener: el usuario
-  // controla el scroll directamente con la rueda o el teclado.
-  const canToggleActive = scrollMode === 'voice' || scrollMode === 'auto'
+  const updateFilter = (key: keyof VideoFilters, value: number) => {
+    onVideoFiltersChange({ ...videoFilters, [key]: value })
+  }
 
   return (
     // Contenido del drawer de ajustes: App.tsx es quien lo posiciona flotando
-    // (fixed) y lo muestra/oculta con el menú de hamburguesa; este panel solo
+    // (fixed) y lo muestra/oculta con el botón de engrane; este panel solo
     // necesita llenar ese contenedor con su propio scroll.
     <aside className="flex h-full w-full flex-col gap-5 overflow-y-auto bg-slate-900 p-5">
       <div>
         <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
-        <p className="text-sm text-slate-400">Reconocimiento de voz nativo del navegador</p>
+        <p className="text-sm text-slate-400">Scroll automático · filtros de video en tiempo real</p>
       </div>
 
       <div className="flex flex-col gap-2">
-        <label htmlFor="script-input" className="text-xs font-medium uppercase tracking-wide text-slate-400">
-          Guion
-        </label>
+        <div className="flex items-center justify-between">
+          <label htmlFor="script-input" className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            Guion
+          </label>
+          <button
+            type="button"
+            onClick={onClearScript}
+            disabled={!script.trim()}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-slate-400 transition hover:bg-slate-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Eraser className="h-3.5 w-3.5" />
+            Limpiar
+          </button>
+        </div>
         <textarea
           id="script-input"
           value={script}
@@ -118,104 +116,50 @@ export const ControlPanel = memo(function ControlPanel({
         />
       </div>
 
-      <div className="flex flex-col gap-2">
-        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Modo de desplazamiento</span>
-        <div role="radiogroup" aria-label="Modo de desplazamiento" className="grid grid-cols-1 gap-2">
-          {SCROLL_MODE_OPTIONS.map((option) => {
-            const isSelected = scrollMode === option.value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={isSelected}
-                onClick={() => onScrollModeChange(option.value)}
-                className={[
-                  'flex items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition',
-                  isSelected
-                    ? 'border-cyan-500 bg-cyan-500/10 text-white'
-                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-600',
-                ].join(' ')}
-              >
-                <span className="text-lg leading-none">{option.emoji}</span>
-                <span className="flex flex-col">
-                  <span className="font-medium">{option.label}</span>
-                  <span className="text-xs text-slate-400">{option.description}</span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-950 p-3">
+        <label htmlFor="auto-scroll-speed-input" className="flex items-center justify-between text-xs font-medium uppercase tracking-wide text-slate-400">
+          <span>Velocidad de scroll</span>
+          <span className="text-slate-300">{autoScrollSpeed.toFixed(2)}/{MAX_AUTO_SCROLL_SPEED.toFixed(2)}</span>
+        </label>
+        <input
+          id="auto-scroll-speed-input"
+          type="range"
+          min={MIN_AUTO_SCROLL_SPEED}
+          max={MAX_AUTO_SCROLL_SPEED}
+          step={AUTO_SCROLL_SPEED_STEP}
+          value={autoScrollSpeed}
+          onChange={(event) => onAutoScrollSpeedChange(Number(event.target.value))}
+          className="w-full accent-cyan-500"
+        />
+      </div>
 
-        {scrollMode === 'auto' && (
-          <div className="mt-1 flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-950 p-3">
-            <label htmlFor="auto-scroll-speed-input" className="flex items-center justify-between text-xs font-medium uppercase tracking-wide text-slate-400">
-              <span>Velocidad de scroll</span>
-              <span className="text-slate-300">{autoScrollSpeed.toFixed(1)}/{MAX_AUTO_SCROLL_SPEED.toFixed(1)}</span>
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-950 p-3">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Filtros de video en tiempo real</span>
+        {FILTER_SLIDERS.map((filter) => (
+          <div key={filter.key} className="flex flex-col gap-1">
+            <label
+              htmlFor={`filter-${filter.key}`}
+              className="flex items-center justify-between text-xs font-medium text-slate-300"
+            >
+              <span>{filter.label}</span>
+              <span className="text-slate-400">
+                {videoFilters[filter.key].toFixed(filter.step < 1 ? 1 : 0)}
+                {filter.unit}
+              </span>
             </label>
             <input
-              id="auto-scroll-speed-input"
+              id={`filter-${filter.key}`}
               type="range"
-              min={MIN_AUTO_SCROLL_SPEED}
-              max={MAX_AUTO_SCROLL_SPEED}
-              step={AUTO_SCROLL_SPEED_STEP}
-              value={autoScrollSpeed}
-              onChange={(event) => onAutoScrollSpeedChange(Number(event.target.value))}
+              min={filter.min}
+              max={filter.max}
+              step={filter.step}
+              value={videoFilters[filter.key]}
+              onChange={(event) => updateFilter(filter.key, Number(event.target.value))}
               className="w-full accent-cyan-500"
             />
+            {filter.hint && <p className="text-[11px] text-slate-500">{filter.hint}</p>}
           </div>
-        )}
-      </div>
-
-      <div className={`rounded-lg border border-slate-700 bg-slate-950 p-3 transition-opacity ${isVoiceMode ? '' : 'opacity-50'}`}>
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <StatusIcon className={`h-4 w-4 ${status.className}`} />
-          <span className={status.className}>Reconocimiento de voz: {status.label}</span>
-        </div>
-        {speechError && <p className="mt-2 text-xs text-red-400">{speechError}</p>}
-        {!isVoiceMode && <p className="mt-2 text-xs text-slate-500">Cambia a modo Voz para usar el micrófono.</p>}
-      </div>
-
-      <div className={`rounded-lg border border-slate-700 bg-slate-950 p-3 transition-opacity ${isVoiceMode ? '' : 'opacity-50'}`}>
-        <div className="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-          {speechStatus === 'listening' ? <Mic className="h-3.5 w-3.5 text-cyan-400" /> : <MicOff className="h-3.5 w-3.5" />}
-          Último fragmento escuchado
-        </div>
-        <p className="min-h-[2.5rem] text-sm text-slate-200">
-          {lastTranscript || 'Aún no se ha escuchado audio.'}
-        </p>
-      </div>
-
-      <div className="mt-auto flex flex-col gap-2">
-        {!isActive ? (
-          <button
-            type="button"
-            onClick={onStart}
-            disabled={!script.trim() || !canToggleActive}
-            title={canToggleActive ? undefined : 'El modo manual no requiere iniciar nada: usa la rueda o el teclado'}
-            className="flex items-center justify-center gap-2 rounded-lg bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Play className="h-4 w-4" />
-            Iniciar Teleprónpter
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onStop}
-            className="flex items-center justify-center gap-2 rounded-lg bg-red-500 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-400"
-          >
-            <Square className="h-4 w-4" />
-            Detener
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onReset}
-          className="flex items-center justify-center gap-2 rounded-lg border border-slate-700 px-4 py-2.5 text-sm font-medium text-slate-300 transition hover:bg-slate-800"
-        >
-          <RotateCcw className="h-4 w-4" />
-          Reiniciar posición
-        </button>
+        ))}
       </div>
     </aside>
   )

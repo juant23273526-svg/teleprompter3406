@@ -1,24 +1,27 @@
 import { Video } from 'lucide-react'
 import { memo } from 'react'
 import type { RefObject } from 'react'
+import type { VideoFilters } from '../types'
+import { buildFilterString } from '../utils/videoFilters'
 
 interface CameraViewProps {
   videoPreviewRef: RefObject<HTMLVideoElement>
   canvasRef: RefObject<HTMLCanvasElement>
   isRecording: boolean
+  filters: VideoFilters
 }
 
 /**
- * Memoizado: en modo voz, App.tsx actualiza currentIndex/lastTranscript con
- * cada frase reconocida, lo cual no debe repintar este módulo (ni el <video>
- * ni el <canvas> dependen de ninguno de esos valores). Sin memo, cada uno de
- * esos renders de App recorría también este árbol de cámara por nada,
- * compitiendo por el hilo principal con el drawImage por frame de
- * useVideoRecorder.ts mientras graba en paralelo. `videoPreviewRef` y
- * `canvasRef` son refs (identidad estable) e `isRecording` solo cambia al
- * iniciar/detener grabación, así que memo bloquea el resto de los renders de App.
+ * Memoizado: App.tsx re-renderiza seguido mientras el motor de auto-scroll
+ * corre, lo cual no debe repintar este módulo (ni el <video> ni el <canvas>
+ * dependen de esos valores). Sin memo, cada uno de esos renders de App
+ * recorría también este árbol de cámara por nada, compitiendo por el hilo
+ * principal con el drawImage por frame de useVideoRecorder.ts mientras graba
+ * en paralelo. `videoPreviewRef` y `canvasRef` son refs (identidad estable)
+ * e `isRecording`/`filters` solo cambian al iniciar/detener grabación o
+ * mover un slider de filtro, así que memo bloquea el resto de los renders de App.
  */
-export const CameraView = memo(function CameraView({ videoPreviewRef, canvasRef, isRecording }: CameraViewProps) {
+export const CameraView = memo(function CameraView({ videoPreviewRef, canvasRef, isRecording, filters }: CameraViewProps) {
   return (
     <div className="app-grid-camera relative overflow-hidden rounded-2xl bg-black">
       <video
@@ -34,6 +37,9 @@ export const CameraView = memo(function CameraView({ videoPreviewRef, canvasRef,
           // tenga que repintarlo junto con el resto de la interfaz.
           transform: 'translateZ(0)',
           WebkitTransform: 'translateZ(0)',
+          // Mismo filtro que useVideoRecorder.ts aplica al canvas de
+          // grabación: la vista previa en vivo debe verse igual a lo grabado.
+          filter: buildFilterString(filters),
         }}
       />
 

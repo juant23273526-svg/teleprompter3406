@@ -1,25 +1,22 @@
-import { Menu, Pause, Play, Square, Video, X } from 'lucide-react'
+import { Pause, Play, Settings, Square, Trash2, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CameraView } from './components/CameraView'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
 import { VideoPreviewModal } from './components/VideoPreviewModal'
-import { useSpeechRecognition } from './hooks/useSpeechRecognition'
 import { useVideoRecorder } from './hooks/useVideoRecorder'
-import type { ScrollMode } from './types'
-import { findBestMatch } from './utils/fuzzyMatch'
+import { DEFAULT_VIDEO_FILTERS, type VideoFilters } from './types'
 
 const DEFAULT_SCRIPT = `Bienvenidos a este teleprónpter inteligente.
-Este texto se desplaza automáticamente mientras hablas.
-Todo el reconocimiento de voz ocurre de forma nativa en el navegador.
-Puedes pegar tu propio guion en el panel de la izquierda.
+Este texto se desplaza automáticamente a la velocidad que elijas.
+Ajusta la velocidad y los filtros de video desde el engrane de ajustes.
+Puedes pegar tu propio guion en el panel de ajustes.
 Ajusta el tamaño de fuente según tu comodidad de lectura.
-Presiona "Iniciar Teleprónpter" y comienza a leer con naturalidad.
-El sistema seguirá tu voz y desplazará el texto automáticamente.`
+Presiona "Iniciar Teleprónpter" y comienza a leer con naturalidad.`
 
 /** Velocidad media del rango: ritmo de lectura conversacional normal. */
 const DEFAULT_AUTO_SCROLL_SPEED = 2.5
-const MIN_AUTO_SCROLL_SPEED = 0.2
+const MIN_AUTO_SCROLL_SPEED = 0.05
 const MAX_AUTO_SCROLL_SPEED = 5
 /** Escala en píxeles por segundo en los extremos del rango (ver reshapeSensitivityCurve para el tramo medio). */
 const MIN_AUTO_SCROLL_PX_PER_SEC = 8
@@ -32,10 +29,10 @@ const AUTO_SCROLL_RESUME_DELAY_MS = 1200
  * normalizada del slider). El 70% central del recorrido del control
  * (t entre 0.15 y 0.85, que en el slider real cae en la franja de velocidad
  * "conversacional") se comprime a solo el 30% del rango de salida en
- * px/s: cada paso de 0.1 del slider ahí mueve la velocidad real muy poco,
- * permitiendo micro-ajustes finos. En los extremos (muy lento / muy rápido,
- * donde la precisión importa menos) la curva es más empinada, así se
- * alcanzan rápido con menos recorrido del slider.
+ * px/s: cada micro-paso de 0.05 del slider ahí mueve la velocidad real muy
+ * poco, permitiendo micro-ajustes ultrasuaves e imperceptibles. En los
+ * extremos (muy lento / muy rápido, donde la precisión importa menos) la
+ * curva es más empinada, así se alcanzan rápido con menos recorrido del slider.
  */
 function reshapeSensitivityCurve(t: number): number {
   if (t <= 0.15) return (t / 0.15) * 0.35
@@ -43,7 +40,7 @@ function reshapeSensitivityCurve(t: number): number {
   return 0.35 + ((t - 0.15) / 0.7) * 0.3
 }
 
-/** Convierte el nivel de velocidad (0.2..5, paso 0.1) a px/s vía la curva de sensibilidad no lineal. */
+/** Convierte el nivel de velocidad (0.05..5, paso 0.05) a px/s vía la curva de sensibilidad no lineal. */
 function autoScrollSpeedToPixelsPerSecond(speed: number): number {
   const clampedSpeed = Math.min(MAX_AUTO_SCROLL_SPEED, Math.max(MIN_AUTO_SCROLL_SPEED, speed))
   const t = (clampedSpeed - MIN_AUTO_SCROLL_SPEED) / (MAX_AUTO_SCROLL_SPEED - MIN_AUTO_SCROLL_SPEED)
@@ -54,48 +51,24 @@ function autoScrollSpeedToPixelsPerSecond(speed: number): number {
 export default function App() {
   const [script, setScript] = useState(DEFAULT_SCRIPT)
   const [fontSize, setFontSize] = useState(36)
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const [lastTranscript, setLastTranscript] = useState('')
-  const [scrollMode, setScrollMode] = useState<ScrollMode>('voice')
   const [autoScrollSpeed, setAutoScrollSpeed] = useState(DEFAULT_AUTO_SCROLL_SPEED)
-  // Único estado de "encendido" del teleprónpter, válido tanto para el modo
-  // voz (micrófono escuchando) como para el modo automático (motor de
-  // scroll corriendo). En modo manual no se usa: no hay proceso que iniciar.
+  const [videoFilters, setVideoFilters] = useState<VideoFilters>(DEFAULT_VIDEO_FILTERS)
+  // Único estado de "encendido" del teleprónpter: motor de scroll automático
+  // corriendo o detenido. Scroll Automático es el único modo de la app.
   const [isActive, setIsActive] = useState(false)
-  // Drawer de ajustes (guion, velocidad, tamaño de letra): flotante, activado
-  // por el botón de hamburguesa; nunca ocupa espacio fijo en el layout.
+  // Drawer de ajustes (guion, velocidad, filtros de video): flotante, activado
+  // por el botón de engrane; nunca ocupa espacio fijo en el layout.
   const [isMenuOpen, setIsMenuOpen] = useState(false)
 
   const lines = useMemo(() => script.split('\n'), [script])
 
-  // Refs para leer el estado más reciente dentro de callbacks del
-  // reconocimiento de voz sin tener que recrear ese listener en cada render.
-  const currentIndexRef = useRef(currentIndex)
-  currentIndexRef.current = currentIndex
-  const linesRef = useRef(lines)
-  linesRef.current = lines
-
-  const handleSpeechResult = useCallback((text: string) => {
-    setLastTranscript(text)
-
-    const match = findBestMatch(text, linesRef.current, currentIndexRef.current)
-    if (match) {
-      setCurrentIndex(match.index)
-    }
-  }, [])
-
-  const {
-    status: speechStatus,
-    errorMessage: speechError,
-    start: startSpeech,
-    stop: stopSpeech,
-    reset: resetSpeech,
-  } = useSpeechRecognition({ onResult: handleSpeechResult, lang: 'es-MX' })
-
   // Grabadora de video independiente del teleprónpter: su propio ciclo de
-  // vida (cámara, MediaRecorder, blob en vista previa) no depende del guion
-  // ni del modo de desplazamiento. Vive en App porque el <video> de cámara
-  // en vivo y el modal de vista previa se renderizan a este nivel.
+  // vida (cámara, MediaRecorder, blob en vista previa) no depende del guion.
+  // Vive en App porque el <video> de cámara en vivo y el modal de vista
+  // previa se renderizan a este nivel. Recibe videoFilters para aplicar
+  // brillo/contraste/saturación/suavizado de piel en tiempo real, tanto en
+  // la vista previa en vivo (CameraView) como en el canvas que graba
+  // MediaRecorder (ver useVideoRecorder.ts).
   const {
     status: recorderStatus,
     errorMessage: recorderError,
@@ -109,7 +82,7 @@ export default function App() {
     shareVideo,
     confirmDownload,
     discardPreview,
-  } = useVideoRecorder()
+  } = useVideoRecorder(videoFilters)
   const isRecording = recorderStatus === 'recording'
 
   // Al iniciar a grabar o al arrancar el teleprónpter, cierra el drawer de
@@ -131,62 +104,26 @@ export default function App() {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
   const handleStart = useCallback(() => {
-    setCurrentIndex(0)
-    currentIndexRef.current = 0
-    setLastTranscript('')
-
-    if (scrollMode === 'voice') {
-      startSpeech()
-    }
     setIsActive(true)
-  }, [scrollMode, startSpeech])
-
-  const handleStop = useCallback(() => {
-    // Frena de inmediato el micrófono (si estaba escuchando) y desactiva el
-    // motor de scroll automático; el efecto de abajo cancela cualquier
-    // requestAnimationFrame pendiente al ver isActive en false.
-    stopSpeech()
-    setIsActive(false)
-  }, [stopSpeech])
-
-  // Cambiar de modo detiene de forma explícita e inmediata lo que estuviera
-  // activo, en vez de depender de un efecto reactivo (esa era la causa del
-  // bucle de controles deshabilitados al alternar modos).
-  const handleScrollModeChange = useCallback(
-    (mode: ScrollMode) => {
-      if (isActive) {
-        stopSpeech()
-        setIsActive(false)
-      }
-      setScrollMode(mode)
-    },
-    [isActive, stopSpeech],
-  )
-
-  const handleReset = useCallback(() => {
-    setCurrentIndex(0)
-    currentIndexRef.current = 0
-    setLastTranscript('')
-    resetSpeech()
-    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [resetSpeech])
-
-  const handleLineClick = useCallback((index: number) => {
-    setCurrentIndex(index)
   }, [])
 
-  // Al desmontar el componente, asegurar que el micrófono quede apagado.
-  useEffect(() => {
-    return () => {
-      stopSpeech()
-    }
-  }, [stopSpeech])
+  const handleStop = useCallback(() => {
+    // Desactiva el motor de scroll automático; el efecto de abajo cancela
+    // cualquier requestAnimationFrame pendiente al ver isActive en false.
+    setIsActive(false)
+  }, [])
+
+  const handleClearScript = useCallback(() => {
+    setScript('')
+    setIsActive(false)
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
 
   // Motor de scroll automático continuo: avanza el contenedor a una
-  // velocidad constante (derivada de autoScrollSpeed) mientras el modo sea
-  // 'auto' y el teleprónpter esté activo. Un gesto de scroll manual del
-  // usuario (rueda/touch) pausa el avance automático brevemente y luego lo
-  // reanuda desde la nueva posición.
+  // velocidad constante (derivada de autoScrollSpeed) mientras el
+  // teleprónpter esté activo. Un gesto de scroll manual del usuario
+  // (rueda/touch) pausa el avance automático brevemente y luego lo reanuda
+  // desde la nueva posición.
   const autoScrollSpeedRef = useRef(autoScrollSpeed)
   autoScrollSpeedRef.current = autoScrollSpeed
   // Acumulador decimal de posición: container.scrollTop redondea a entero al
@@ -198,7 +135,7 @@ export default function App() {
   const scrollAccumulatorRef = useRef(0)
 
   useEffect(() => {
-    if (scrollMode !== 'auto' || !isActive) return
+    if (!isActive) return
 
     const container = scrollContainerRef.current
     if (!container) return
@@ -254,12 +191,7 @@ export default function App() {
       container.removeEventListener('touchmove', markUserInteraction)
       container.removeEventListener('pointerdown', markUserInteraction)
     }
-  }, [scrollMode, isActive])
-
-  // En modo manual no hay ningún proceso que iniciar/pausar: el usuario
-  // controla el scroll directamente con la rueda o el teclado (misma regla
-  // que usa ControlPanel para su propio botón de inicio).
-  const canToggleActive = scrollMode === 'voice' || scrollMode === 'auto'
+  }, [isActive])
 
   return (
     // .app-grid (index.css): 3 franjas apiladas en vertical (prompter 35vh /
@@ -269,15 +201,8 @@ export default function App() {
     // del otro) para que Safari/iOS no tenga que componerlos en la misma capa
     // durante grabaciones largas.
     <div className="app-grid overflow-hidden bg-slate-950 text-slate-100">
-      <div className="app-grid-prompter overflow-hidden rounded-b-2xl bg-slate-900">
-        <PrompterScreen
-          lines={lines}
-          currentIndex={currentIndex}
-          fontSize={fontSize}
-          onLineClick={handleLineClick}
-          scrollMode={scrollMode}
-          scrollContainerRef={scrollContainerRef}
-        />
+      <div className="app-grid-prompter overflow-hidden rounded-b-2xl bg-black">
+        <PrompterScreen lines={lines} fontSize={fontSize} scrollContainerRef={scrollContainerRef} />
       </div>
 
       {/* Módulo de cámara: contiene únicamente la vista previa limpia de la
@@ -289,65 +214,62 @@ export default function App() {
           oculto (nunca montado en el DOM) para alimentar al MediaRecorder
           vía canvas.captureStream() — ver el comentario en ese hook para el
           porqué de ese desacople. Vive en su propio componente memoizado
-          (CameraView) para que los re-renders de App disparados por el
-          reconocimiento de voz (currentIndex/lastTranscript cambian con
-          cada frase) no lo toquen mientras graba. */}
-      <CameraView videoPreviewRef={videoPreviewRef} canvasRef={captureCanvasRef} isRecording={isRecording} />
+          (CameraView) para que otros re-renders de App no lo toquen
+          mientras graba. */}
+      <CameraView
+        videoPreviewRef={videoPreviewRef}
+        canvasRef={captureCanvasRef}
+        isRecording={isRecording}
+        filters={videoFilters}
+      />
 
-      {/* Módulo de acciones: los dos controles principales al alcance del
-          pulgar, siempre a la vista sin importar si el drawer de ajustes
-          está abierto o no. */}
+      {/* Módulo de acciones: los 3 controles principales al alcance del
+          pulgar (Play/Pausa · Grabar · Limpiar), siempre a la vista sin
+          importar si el drawer de ajustes está abierto o no. */}
       <div className="app-grid-actions flex flex-col items-center justify-center gap-1.5 px-4">
         {recorderError && <p className="text-center text-[11px] text-red-400">{recorderError}</p>}
-        <div className="flex w-full max-w-md items-center justify-center gap-3">
+        <div className="flex w-full max-w-md items-center justify-between">
           <button
             type="button"
             onClick={isActive ? handleStop : handleStart}
-            disabled={!isActive && (!script.trim() || !canToggleActive)}
-            title={canToggleActive ? undefined : 'El modo manual no requiere iniciar nada: usa la rueda o el teclado'}
+            disabled={!isActive && !script.trim()}
+            aria-label={isActive ? 'Pausar teleprónpter' : 'Iniciar teleprónpter'}
             className={[
-              'flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition disabled:cursor-not-allowed disabled:opacity-40',
+              'flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold shadow-lg transition disabled:cursor-not-allowed disabled:opacity-40',
               isActive ? 'bg-amber-500 text-slate-950 hover:bg-amber-400' : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400',
             ].join(' ')}
           >
-            {isActive ? (
-              <>
-                <Pause className="h-4 w-4" />
-                Pausar Teleprónpter
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4" />
-                Iniciar Teleprónpter
-              </>
-            )}
+            {isActive ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+            {isActive ? 'Pausar' : 'Iniciar'}
           </button>
 
           <button
             type="button"
             onClick={isRecording ? stopRecording : startRecording}
+            aria-label={isRecording ? 'Detener grabación' : 'Iniciar grabación'}
             className={[
-              'flex flex-1 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold shadow-lg transition',
+              'flex h-16 w-16 shrink-0 items-center justify-center rounded-full shadow-xl transition',
               isRecording ? 'bg-red-500 text-white hover:bg-red-400' : 'bg-slate-100 text-slate-950 hover:bg-white',
             ].join(' ')}
           >
-            {isRecording ? (
-              <>
-                <Square className="h-4 w-4" />
-                Detener Grabación
-              </>
-            ) : (
-              <>
-                <Video className="h-4 w-4" />
-                Iniciar Grabación
-              </>
-            )}
+            {isRecording ? <Square className="h-6 w-6" /> : <Video className="h-6 w-6" />}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleClearScript}
+            disabled={!script.trim()}
+            aria-label="Limpiar texto del teleprónpter"
+            className="flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold text-slate-300 shadow-lg transition hover:bg-slate-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Trash2 className="h-5 w-5" />
+            Limpiar
           </button>
         </div>
       </div>
 
-      {/* Menú de hamburguesa flotante: siempre por encima de todo (z-50).
-          top usa env(safe-area-inset-top) para bajar el botón por debajo del
+      {/* Botón flotante de ajustes: siempre por encima de todo (z-50). top
+          usa env(safe-area-inset-top) para bajar el botón por debajo del
           notch/Dynamic Island y la barra de estado en iPhone; sin esto, en
           algunos modelos el botón quedaba parcialmente tapado o pegado al
           borde superior, fuera del área táctil segura. El drawer de ajustes
@@ -359,7 +281,7 @@ export default function App() {
         aria-label={isMenuOpen ? 'Cerrar menú de ajustes' : 'Abrir menú de ajustes'}
         className="fixed right-4 top-[calc(env(safe-area-inset-top,0px)+1rem)] z-50 flex h-11 w-11 items-center justify-center rounded-full border border-slate-700 bg-slate-900/90 text-slate-100 shadow-lg backdrop-blur transition hover:bg-slate-800"
       >
-        {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        {isMenuOpen ? <X className="h-5 w-5" /> : <Settings className="h-5 w-5" />}
       </button>
 
       {isMenuOpen && (
@@ -371,19 +293,14 @@ export default function App() {
             <ControlPanel
               script={script}
               onScriptChange={setScript}
+              onClearScript={handleClearScript}
               fontSize={fontSize}
               onFontSizeChange={setFontSize}
-              speechStatus={speechStatus}
-              speechError={speechError}
-              lastTranscript={lastTranscript}
               isActive={isActive}
-              onStart={handleStart}
-              onStop={handleStop}
-              onReset={handleReset}
-              scrollMode={scrollMode}
-              onScrollModeChange={handleScrollModeChange}
               autoScrollSpeed={autoScrollSpeed}
               onAutoScrollSpeedChange={setAutoScrollSpeed}
+              videoFilters={videoFilters}
+              onVideoFiltersChange={setVideoFilters}
             />
           </div>
         </div>
