@@ -1,11 +1,11 @@
-import { Pause, Play, Settings, Square, Trash2, Video, X } from 'lucide-react'
+import { Pause, Play, Settings, Square, Video, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CameraView } from './components/CameraView'
 import { ControlPanel } from './components/ControlPanel'
 import { PrompterScreen } from './components/PrompterScreen'
 import { VideoPreviewModal } from './components/VideoPreviewModal'
 import { useVideoRecorder } from './hooks/useVideoRecorder'
-import { DEFAULT_VIDEO_FILTERS, type VideoFilters } from './types'
+import { DEFAULT_VIDEO_FILTERS, DEFAULT_VIDEO_QUALITY, type VideoFilters, type VideoQuality } from './types'
 
 const DEFAULT_SCRIPT = `Bienvenidos a este teleprónpter inteligente.
 Este texto se desplaza automáticamente a la velocidad que elijas.
@@ -53,6 +53,7 @@ export default function App() {
   const [fontSize, setFontSize] = useState(36)
   const [autoScrollSpeed, setAutoScrollSpeed] = useState(DEFAULT_AUTO_SCROLL_SPEED)
   const [videoFilters, setVideoFilters] = useState<VideoFilters>(DEFAULT_VIDEO_FILTERS)
+  const [videoQuality, setVideoQuality] = useState<VideoQuality>(DEFAULT_VIDEO_QUALITY)
   // Único estado de "encendido" del teleprónpter: motor de scroll automático
   // corriendo o detenido. Scroll Automático es el único modo de la app.
   const [isActive, setIsActive] = useState(false)
@@ -76,13 +77,12 @@ export default function App() {
     canvasRef: captureCanvasRef,
     previewBlob,
     previewMimeType,
-    canShareFiles,
+    canAttemptShare,
     start: startRecording,
     stop: stopRecording,
     shareVideo,
-    confirmDownload,
     discardPreview,
-  } = useVideoRecorder(videoFilters)
+  } = useVideoRecorder(videoFilters, videoQuality)
   const isRecording = recorderStatus === 'recording'
 
   // Al iniciar a grabar o al arrancar el teleprónpter, cierra el drawer de
@@ -224,24 +224,27 @@ export default function App() {
         onFiltersChange={setVideoFilters}
       />
 
-      {/* Módulo de acciones: los 3 controles principales al alcance del
-          pulgar (Play/Pausa · Grabar · Limpiar), siempre a la vista sin
-          importar si el drawer de ajustes está abierto o no. */}
-      <div className="app-grid-actions flex flex-col items-center justify-center gap-1.5 px-4">
+      {/* Módulo de acciones: los 2 controles principales (Play/Pausa ·
+          Grabar) como cápsulas premium al alcance del pulgar, siempre a la
+          vista sin importar si el drawer de ajustes está abierto o no.
+          mb-[...safe-area-inset-bottom...] los separa del Home Indicator de
+          iOS; no hay ningún botón de "Limpiar" en esta pantalla — esa
+          acción vive únicamente en el panel de ajustes (ControlPanel.tsx). */}
+      <div className="app-grid-actions mb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] flex flex-col items-center justify-center gap-1.5 px-4">
         {recorderError && <p className="text-center text-[11px] text-red-400">{recorderError}</p>}
-        <div className="flex w-full max-w-md items-center justify-between">
+        <div className="flex w-full max-w-md items-center gap-3">
           <button
             type="button"
             onClick={isActive ? handleStop : handleStart}
             disabled={!isActive && !script.trim()}
             aria-label={isActive ? 'Pausar teleprónpter' : 'Iniciar teleprónpter'}
             className={[
-              'flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold text-white shadow-lg transition disabled:cursor-not-allowed disabled:opacity-40',
-              isActive ? 'bg-blue-800 hover:bg-blue-900' : 'bg-blue-600 hover:bg-blue-700',
+              'flex flex-1 items-center justify-center gap-2 rounded-full border border-white/10 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/25 backdrop-blur-xl transition-all duration-200 ease-out hover:scale-[1.02] active:scale-95 active:shadow-inner disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100',
+              isActive ? 'bg-gradient-to-b from-blue-700/90 to-blue-800/90' : 'bg-gradient-to-b from-blue-500/90 to-blue-600/90',
             ].join(' ')}
           >
-            {isActive ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-            {isActive ? 'Pausar' : 'Iniciar'}
+            {isActive ? <Pause className="h-5 w-5 shrink-0" /> : <Play className="h-5 w-5 shrink-0" />}
+            <span className="truncate">{isActive ? 'Pausar' : 'Teleprónpter'}</span>
           </button>
 
           <button
@@ -249,22 +252,12 @@ export default function App() {
             onClick={isRecording ? stopRecording : startRecording}
             aria-label={isRecording ? 'Detener grabación' : 'Iniciar grabación'}
             className={[
-              'flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-white shadow-xl transition',
-              isRecording ? 'bg-red-800 hover:bg-red-900' : 'bg-red-600 hover:bg-red-700',
+              'flex flex-1 items-center justify-center gap-2 rounded-full border border-white/10 px-6 py-3.5 text-sm font-semibold text-white shadow-lg shadow-red-500/25 backdrop-blur-xl transition-all duration-200 ease-out hover:scale-[1.02] active:scale-95 active:shadow-inner',
+              isRecording ? 'bg-gradient-to-b from-red-700/90 to-red-800/90' : 'bg-gradient-to-b from-red-500/90 to-red-600/90',
             ].join(' ')}
           >
-            {isRecording ? <Square className="h-6 w-6" /> : <Video className="h-6 w-6" />}
-          </button>
-
-          <button
-            type="button"
-            onClick={handleClearScript}
-            disabled={!script.trim()}
-            aria-label="Limpiar texto del teleprónpter"
-            className="flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-semibold text-slate-300 shadow-lg transition hover:bg-slate-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Trash2 className="h-5 w-5" />
-            Limpiar
+            {isRecording ? <Square className="h-5 w-5 shrink-0" /> : <Video className="h-5 w-5 shrink-0" />}
+            <span className="truncate">{isRecording ? 'Detener' : 'Grabar'}</span>
           </button>
         </div>
       </div>
@@ -302,6 +295,9 @@ export default function App() {
               onAutoScrollSpeedChange={setAutoScrollSpeed}
               videoFilters={videoFilters}
               onVideoFiltersChange={setVideoFilters}
+              videoQuality={videoQuality}
+              onVideoQualityChange={setVideoQuality}
+              isRecording={isRecording}
             />
           </div>
         </div>
@@ -311,11 +307,8 @@ export default function App() {
         <VideoPreviewModal
           blob={previewBlob}
           mimeType={previewMimeType}
-          canShare={canShareFiles}
-          onShare={() => {
-            void shareVideo()
-          }}
-          onDownload={confirmDownload}
+          canShare={canAttemptShare}
+          onShare={shareVideo}
           onDiscard={discardPreview}
         />
       )}

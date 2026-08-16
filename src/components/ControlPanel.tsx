@@ -1,6 +1,7 @@
-import { Eraser } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import { memo } from 'react'
-import type { VideoFilters } from '../types'
+import type { VideoFilters, VideoQuality } from '../types'
+import { VIDEO_QUALITY_PRESETS } from '../types'
 import { FILTER_SLIDER_CONFIGS } from '../utils/videoFilters'
 
 interface ControlPanelProps {
@@ -14,7 +15,13 @@ interface ControlPanelProps {
   onAutoScrollSpeedChange: (speed: number) => void
   videoFilters: VideoFilters
   onVideoFiltersChange: (filters: VideoFilters) => void
+  videoQuality: VideoQuality
+  onVideoQualityChange: (quality: VideoQuality) => void
+  /** true mientras hay una grabación en curso: la calidad solo puede cambiar entre tomas. */
+  isRecording: boolean
 }
+
+const VIDEO_QUALITY_OPTIONS = Object.entries(VIDEO_QUALITY_PRESETS) as Array<[VideoQuality, (typeof VIDEO_QUALITY_PRESETS)[VideoQuality]]>
 
 const MIN_FONT_SIZE = 20
 const MAX_FONT_SIZE = 64
@@ -42,6 +49,9 @@ export const ControlPanel = memo(function ControlPanel({
   onAutoScrollSpeedChange,
   videoFilters,
   onVideoFiltersChange,
+  videoQuality,
+  onVideoQualityChange,
+  isRecording,
 }: ControlPanelProps) {
   const updateFilter = (key: keyof VideoFilters, value: number) => {
     onVideoFiltersChange({ ...videoFilters, [key]: value })
@@ -52,41 +62,43 @@ export const ControlPanel = memo(function ControlPanel({
     // (fixed) y lo muestra/oculta con el botón de engrane; este panel solo
     // necesita llenar ese contenedor con su propio scroll.
     <aside className="flex h-full w-full flex-col gap-5 overflow-y-auto bg-slate-900 p-5">
-      {/* El botón de cerrar (X/engrane) vive en App.tsx, fixed en la esquina
-          superior DERECHA por encima de todo (z-50). El de 'Limpiar' se
-          ancla aquí, a la IZQUIERDA, en su propia capa dentro del flujo
-          normal del panel (z-40 heredado del contenedor del drawer): así
-          nunca comparten posición ni pueden traslaparse, sin importar el
-          tamaño de pantalla o el safe-area-inset del dispositivo. */}
-      <div className="flex items-center gap-3">
+      {/* Único cierre del panel: el botón X/engrane fixed en App.tsx, arriba
+          a la derecha (z-50). Este encabezado no repite ningún control de
+          cierre ni de limpiar guion (esa acción vive ahora en un solo botón
+          flotante sobre el teleprónpter, ver App.tsx) para no amontonar
+          iconos redundantes sobre el título. */}
+      <div>
+        <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
+        <p className="text-sm text-slate-400">Scroll automático · filtros de video en tiempo real</p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {/* Sin etiqueta de texto "Guion": en su lugar, el único control para
+            vaciar el guion en todo el panel — un icono de papelera rojo,
+            sin fondo, que limpia el texto al presionarlo. */}
         <button
           type="button"
           onClick={onClearScript}
           disabled={!script.trim()}
           aria-label="Limpiar guion"
           title="Limpiar guion"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-950 text-slate-300 transition hover:border-red-500/50 hover:bg-slate-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+          className="self-start bg-transparent text-red-500 transition hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <Eraser className="h-4 w-4" />
+          <Trash2 className="h-5 w-5" />
         </button>
-        <div>
-          <h1 className="text-lg font-semibold text-white">Teleprónpter Inteligente</h1>
-          <p className="text-sm text-slate-400">Scroll automático · filtros de video en tiempo real</p>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="script-input" className="text-xs font-medium uppercase tracking-wide text-slate-400">
-          Guion
-        </label>
         <textarea
           id="script-input"
+          aria-label="Guion"
           value={script}
           onChange={(event) => onScriptChange(event.target.value)}
           disabled={isActive}
           rows={10}
           placeholder="Pega o escribe aquí el guion..."
-          className="w-full resize-none rounded-lg border border-slate-700 bg-slate-950 p-3 text-sm text-slate-100 outline-none transition focus:border-cyan-500 disabled:opacity-50"
+          // text-base (16px), no text-sm: por debajo de 16px, Safari/iOS
+          // hace zoom automático de la página al enfocar el campo. La meta
+          // viewport (user-scalable=no) ya lo bloquea a nivel de página,
+          // pero el tamaño de fuente correcto evita depender solo de eso.
+          className="w-full resize-none rounded-lg border border-slate-700 bg-slate-950 p-3 text-base text-slate-100 outline-none transition focus:border-cyan-500 disabled:opacity-50"
         />
       </div>
 
@@ -122,6 +134,31 @@ export const ControlPanel = memo(function ControlPanel({
           onChange={(event) => onAutoScrollSpeedChange(Number(event.target.value))}
           className="w-full accent-cyan-500"
         />
+      </div>
+
+      <div className="flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-950 p-3">
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-400">Calidad de video</span>
+        <div className="grid grid-cols-2 gap-2">
+          {VIDEO_QUALITY_OPTIONS.map(([key, preset]) => (
+            <button
+              key={key}
+              type="button"
+              role="radio"
+              aria-checked={videoQuality === key}
+              onClick={() => onVideoQualityChange(key)}
+              disabled={isRecording}
+              className={[
+                'rounded-lg border px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40',
+                videoQuality === key
+                  ? 'border-cyan-500 bg-cyan-500/10 text-white'
+                  : 'border-slate-700 text-slate-300 hover:border-slate-600',
+              ].join(' ')}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+        {isRecording && <p className="text-[11px] text-slate-500">Detén la grabación actual para cambiar la calidad.</p>}
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border border-slate-700 bg-slate-950 p-3">

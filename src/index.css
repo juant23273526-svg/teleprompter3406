@@ -7,6 +7,17 @@ body,
   margin: 0;
 }
 
+/* Evita el zoom accidental de Safari/iOS (doble-tap, pellizco, cambio de
+   foco entre inputs) y el "rebote" elástico de scroll fuera del contenido:
+   sin esto, un toque rápido en los controles puede hacer que iOS aplique un
+   zoom no deseado a toda la página, desajustando el layout de app-grid. */
+html,
+body {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
 body {
   background-color: #020617;
   color-scheme: dark;

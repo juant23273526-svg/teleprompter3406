@@ -16,3 +16,22 @@ export const DEFAULT_VIDEO_FILTERS: VideoFilters = {
   saturate: 100,
   skinSmooth: 0,
 }
+
+/** Calidad de grabación: 'high' prioriza nitidez, 'social' prioriza tamaño de archivo liviano para compartir. */
+export type VideoQuality = 'high' | 'social'
+
+export interface VideoQualityPreset {
+  label: string
+  /** Ancho/alto "ideal" pedidos a getUserMedia (no "exact"): la cámara puede negociar algo distinto sin fallar. */
+  width: number
+  height: number
+  /** Tasa de bits objetivo para MediaRecorder (videoBitsPerSecond). */
+  bitrate: number
+}
+
+export const VIDEO_QUALITY_PRESETS: Record<VideoQuality, VideoQualityPreset> = {
+  high: { label: 'Alta Calidad · 1080p', width: 1920, height: 1080, bitrate: 8_000_000 },
+  social: { label: 'Redes Sociales · 720p', width: 1280, height: 720, bitrate: 2_500_000 },
+}
+
+export const DEFAULT_VIDEO_QUALITY: VideoQuality = 'high'
